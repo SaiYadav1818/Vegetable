@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'dart:math';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 /// REST client for the local FreshBasket API. On Android emulator use
@@ -34,4 +35,15 @@ class ApiClient {
   Future<void> saveAccessToken(String token) =>
       _storage.write(key: _tokenKey, value: token);
   Future<void> clearAccessToken() => _storage.delete(key: _tokenKey);
+  Future<String> getOrCreateDeviceId() async {
+    var deviceId = await _storage.read(key: 'freshbasket.device_id');
+    if (deviceId == null || deviceId.isEmpty) {
+      final random = Random.secure();
+      deviceId = List<int>.generate(16, (_) => random.nextInt(256))
+          .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+          .join();
+      await _storage.write(key: 'freshbasket.device_id', value: deviceId);
+    }
+    return deviceId;
+  }
 }

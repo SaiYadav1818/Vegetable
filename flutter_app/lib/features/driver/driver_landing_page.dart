@@ -1,9 +1,10 @@
 import 'dart:async';
-
 import 'package:flutter/material.dart';
-
 import '../../core/network/api_client.dart';
 import '../../core/platform/device_services.dart';
+import '../../core/theme/app_theme.dart';
+import '../../core/widgets/app_states.dart';
+import '../../core/widgets/design_components.dart';
 import '../auth/auth_api.dart';
 import '../orders/order_models.dart';
 import '../orders/orders_api.dart';
@@ -28,7 +29,6 @@ class _DriverLandingPageState extends State<DriverLandingPage>
   late Future<List<DriverOrder>> _future = _api.driverOrders();
   Timer? _locationTimer;
   bool _online = false, _sharing = false, _busy = false;
-
   @override
   void initState() {
     super.initState();
@@ -52,19 +52,20 @@ class _DriverLandingPageState extends State<DriverLandingPage>
     await _future;
   }
 
-  void _message(Object e) {
-    if (mounted)
+  void _toast(String message) {
+    if (mounted) {
       ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text(_api.describeError(e))));
+          .showSnackBar(SnackBar(content: Text(message)));
+    }
   }
 
-  Future<void> _setOnline(bool value) async {
+  Future<void> _availability(bool value) async {
     try {
       await _api.setDriverOnline(value);
       if (mounted) setState(() => _online = value);
       await _reload();
     } catch (e) {
-      _message(e);
+      _toast(_api.describeError(e));
     }
   }
 
@@ -75,7 +76,7 @@ class _DriverLandingPageState extends State<DriverLandingPage>
       await _reload();
       return true;
     } catch (e) {
-      _message(e);
+      _toast(_api.describeError(e));
       return false;
     } finally {
       if (mounted) setState(() => _busy = false);
@@ -88,7 +89,7 @@ class _DriverLandingPageState extends State<DriverLandingPage>
       await _sendLocation();
     } catch (e) {
       if (mounted) setState(() => _sharing = false);
-      _message(e);
+      _toast(_api.describeError(e));
       return;
     }
     _locationTimer = Timer.periodic(const Duration(seconds: 15), (_) async {
@@ -96,7 +97,7 @@ class _DriverLandingPageState extends State<DriverLandingPage>
         await _sendLocation();
       } catch (e) {
         _stopLocation();
-        _message(e);
+        _toast(_api.describeError(e));
       }
     });
   }
@@ -104,8 +105,9 @@ class _DriverLandingPageState extends State<DriverLandingPage>
   Future<void> _sendLocation() async {
     if (!_sharing ||
         !mounted ||
-        WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed)
+        WidgetsBinding.instance.lifecycleState != AppLifecycleState.resumed) {
       return;
+    }
     final position = await _device.currentLocation();
     await _api.updateDriverLocation(
         position['latitude']!, position['longitude']!);
@@ -122,20 +124,28 @@ class _DriverLandingPageState extends State<DriverLandingPage>
     final otp = await showDialog<String>(
         context: context,
         builder: (ctx) => AlertDialog(
-              title: const Text('Confirm delivery'),
-              content: TextField(
-                  controller: controller,
-                  keyboardType: TextInputType.number,
-                  maxLength: 6,
-                  decoration: const InputDecoration(
-                      labelText: 'Customer delivery OTP')),
+              title: const Text('Verify delivery'),
+              content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                        'Collect ₹${order.totalAmount.toStringAsFixed(2)} in cash, then enter the customer OTP.'),
+                    const SizedBox(height: 12),
+                    TextField(
+                        controller: controller,
+                        keyboardType: TextInputType.number,
+                        maxLength: 6,
+                        decoration: const InputDecoration(
+                            labelText: '6 digit delivery OTP'))
+                  ]),
               actions: [
                 TextButton(
                     onPressed: () => Navigator.pop(ctx),
                     child: const Text('Back')),
                 FilledButton(
-                    onPressed: () => Navigator.pop(ctx, controller.text),
-                    child: const Text('Verify & deliver'))
+                    onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+                    child: const Text('Complete delivery'))
               ],
             ));
     controller.dispose();
@@ -152,107 +162,236 @@ class _DriverLandingPageState extends State<DriverLandingPage>
     try {
       await _device.openExternalUrl(
           'https://www.google.com/maps/search/?api=1&query=$address');
-    } catch (e) {
-      if (mounted) _message(StateError('Could not open maps'));
+    } catch (_) {
+      _toast('Could not open maps on this device.');
     }
   }
 
-  Widget _orderCard(DriverOrder order) {
-    final status = order.assignmentStatus;
-    return Card(
-        margin: const EdgeInsets.fromLTRB(12, 7, 12, 7),
-        child: Padding(
-            padding: const EdgeInsets.all(14),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('${order.orderNumber} · ${status.replaceAll('_', ' ')}',
-                    style: Theme.of(context).textTheme.titleMedium),
-                Text('${order.customerName} · ${order.customerPhone}'),
-                Text('${order.addressLine}, ${order.area}, ${order.pincode}'),
-                Text('${order.deliverySlot} · Rs. ${order.totalAmount}'),
-                ...order.items.map((item) =>
-                    Text('${item.name} · ${item.quantity} ${item.unit}')),
-                Wrap(spacing: 8, children: [
-                  TextButton.icon(
-                      onPressed: () => _navigate(order),
-                      icon: const Icon(Icons.navigation),
-                      label: const Text('Navigate')),
-                  if (status == 'ASSIGNED')
-                    FilledButton(
-                        onPressed: _busy
-                            ? null
-                            : () =>
-                                _act(() => _api.acceptDelivery(order.orderId)),
-                        child: const Text('Accept')),
-                  if (status == 'ACCEPTED')
-                    FilledButton(
-                        onPressed: _busy
-                            ? null
-                            : () =>
-                                _act(() => _api.pickupDelivery(order.orderId)),
-                        child: const Text('Picked up')),
-                  if (status == 'PICKED_UP')
-                    FilledButton(
-                        onPressed: _busy ? null : () => _deliver(order),
-                        child: const Text('Complete with OTP')),
-                ]),
-              ],
-            )));
+  Future<void> _call(String phone) async {
+    try {
+      await _device.openExternalUrl('tel:$phone');
+    } catch (_) {
+      _toast('Could not open the phone app.');
+    }
   }
 
   @override
   Widget build(BuildContext context) => Scaffold(
-        appBar: AppBar(
-            title: Text('Deliveries · ${widget.session.fullName}'),
+        appBar: FreshBasketAppBar(
+            title: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('Driver dashboard',
+                      style: Theme.of(context)
+                          .textTheme
+                          .titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w800)),
+                  Text(widget.session.fullName,
+                      style: Theme.of(context)
+                          .textTheme
+                          .labelSmall
+                          ?.copyWith(color: AppColors.muted))
+                ]),
             actions: [
               IconButton(
-                  onPressed: widget.onSignOut, icon: const Icon(Icons.logout))
+                  tooltip: 'Sign out',
+                  onPressed: widget.onSignOut,
+                  icon: const Icon(Icons.logout))
             ]),
-        body: Column(children: [
-          SwitchListTile(
-              title: const Text('Available for deliveries'),
-              value: _online,
-              onChanged: _busy ? null : _setOnline),
-          Expanded(
-              child: FutureBuilder<List<DriverOrder>>(
-                  future: _future,
-                  builder: (context, snapshot) {
-                    if (snapshot.connectionState == ConnectionState.waiting)
-                      return const Center(child: CircularProgressIndicator());
-                    if (snapshot.hasError)
-                      return Center(
-                          child: TextButton(
-                              onPressed: _reload,
-                              child: const Text(
-                                  'Could not load deliveries. Retry')));
-                    final orders = snapshot.data ?? [];
-                    if (orders.isEmpty)
-                      return const Center(
-                          child: Text('No deliveries assigned yet'));
-                    final active = orders.any((o) =>
-                        o.assignmentStatus == 'ACCEPTED' ||
-                        o.assignmentStatus == 'PICKED_UP');
-                    return RefreshIndicator(
-                        onRefresh: _reload,
-                        child: ListView(children: [
-                          if (active)
-                            Padding(
+        body: FutureBuilder<List<DriverOrder>>(
+            future: _future,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return const LoadingState(
+                    message: 'Loading assigned deliveries...');
+              }
+              if (snapshot.hasError) {
+                return ErrorState(
+                    message: _api.describeError(snapshot.error!),
+                    onRetry: _reload);
+              }
+              final orders = snapshot.data ?? [];
+              final active = orders
+                  .where((o) =>
+                      o.assignmentStatus == 'ACCEPTED' ||
+                      o.assignmentStatus == 'PICKED_UP')
+                  .length;
+              final pending =
+                  orders.where((o) => o.assignmentStatus == 'ASSIGNED').length;
+              final complete =
+                  orders.where((o) => o.assignmentStatus == 'DELIVERED').length;
+              return RefreshIndicator(
+                  onRefresh: _reload,
+                  child: ListView(
+                      padding: const EdgeInsets.fromLTRB(12, 8, 12, 24),
+                      children: [
+                        Card(
+                            child: Padding(
                                 padding:
-                                    const EdgeInsets.symmetric(horizontal: 12),
-                                child: OutlinedButton.icon(
-                                  onPressed:
-                                      _sharing ? _stopLocation : _startLocation,
-                                  icon: Icon(_sharing
-                                      ? Icons.location_on
-                                      : Icons.location_searching),
-                                  label: Text(_sharing
-                                      ? 'Stop location sharing'
-                                      : 'Share live location for active delivery'),
-                                )),
-                          ...orders.map(_orderCard),
-                        ]));
-                  })),
-        ]),
+                                    const EdgeInsets.fromLTRB(16, 10, 12, 10),
+                                child: Row(children: [
+                                  Container(
+                                      width: 42,
+                                      height: 42,
+                                      decoration: BoxDecoration(
+                                          color: _online
+                                              ? AppColors.paleGreen
+                                              : const Color(0xFFF1F3F0),
+                                          shape: BoxShape.circle),
+                                      child: Icon(Icons.delivery_dining,
+                                          color: _online
+                                              ? AppColors.green
+                                              : AppColors.muted)),
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                      child: Column(
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: [
+                                        Text(
+                                            _online
+                                                ? 'You are online'
+                                                : 'You are offline',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .titleSmall
+                                                ?.copyWith(
+                                                    fontWeight:
+                                                        FontWeight.w800)),
+                                        Text(
+                                            _online
+                                                ? 'Available for your assigned work'
+                                                : 'Go online to receive deliveries',
+                                            style: Theme.of(context)
+                                                .textTheme
+                                                .bodySmall)
+                                      ])),
+                                  Switch(
+                                      value: _online,
+                                      onChanged: _busy ? null : _availability)
+                                ]))),
+                        const SizedBox(height: 12),
+                        Row(children: [
+                          Expanded(
+                              child: DashboardStatCard(
+                                  title: 'New',
+                                  value: '$pending',
+                                  icon: Icons.inbox_outlined)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                              child: DashboardStatCard(
+                                  title: 'Active',
+                                  value: '$active',
+                                  icon: Icons.route_outlined,
+                                  accent: AppColors.orange)),
+                          const SizedBox(width: 8),
+                          Expanded(
+                              child: DashboardStatCard(
+                                  title: 'Completed',
+                                  value: '$complete',
+                                  icon: Icons.task_alt_rounded))
+                        ]),
+                        const SectionTitle('Assigned orders'),
+                        if (orders.isEmpty)
+                          const EmptyState(
+                              icon: Icons.delivery_dining_outlined,
+                              title: 'No deliveries assigned',
+                              message:
+                                  'New delivery assignments will appear here.'),
+                        ...orders.map(_orderCard),
+                      ]));
+            }),
       );
+
+  Widget _orderCard(DriverOrder order) {
+    final status = order.assignmentStatus;
+    final actions = <Widget>[
+      OutlinedButton.icon(
+          onPressed: () => _call(order.customerPhone),
+          icon: const Icon(Icons.call_outlined),
+          label: const Text('Call customer')),
+      OutlinedButton.icon(
+          onPressed: () => _navigate(order),
+          icon: const Icon(Icons.navigation_outlined),
+          label: const Text('Navigate')),
+      if (status == 'ASSIGNED')
+        FilledButton(
+            onPressed: _busy
+                ? null
+                : () => _act(() => _api.acceptDelivery(order.orderId)),
+            child: const Text('Accept delivery')),
+      if (status == 'ACCEPTED')
+        FilledButton(
+            onPressed: _busy
+                ? null
+                : () => _act(() => _api.pickupDelivery(order.orderId)),
+            child: const Text('Mark picked up')),
+      if (status == 'PICKED_UP')
+        FilledButton(
+            onPressed: _busy ? null : () => _deliver(order),
+            child: const Text('Complete with OTP')),
+    ];
+    return DeliveryOrderCard(
+        title: order.orderNumber,
+        subtitle: '${order.customerName} · ${order.deliverySlot}',
+        status: _orderStatus(status),
+        actions: actions,
+        details:
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(order.addressLine,
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(fontWeight: FontWeight.w600)),
+          Text('${order.area}, ${order.pincode}',
+              style: Theme.of(context).textTheme.bodySmall),
+          if (order.deliveryInstructions?.isNotEmpty == true)
+            Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text('Note: ${order.deliveryInstructions}',
+                    style: Theme.of(context).textTheme.bodySmall)),
+          const Divider(height: 20),
+          ...order.items.map((item) => Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Row(children: [
+                Expanded(
+                    child: Text(
+                        '${item.name} · ${item.quantity} ${item.unit.toLowerCase()}')),
+                Text('₹${item.lineTotal.toStringAsFixed(2)}',
+                    style: const TextStyle(fontWeight: FontWeight.w700))
+              ]))),
+          const Divider(height: 20),
+          Row(children: [
+            const Icon(Icons.payments_outlined,
+                color: AppColors.green, size: 18),
+            const SizedBox(width: 6),
+            const Expanded(child: Text('Cash to collect')),
+            Text('₹${order.totalAmount.toStringAsFixed(2)}',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleSmall
+                    ?.copyWith(fontWeight: FontWeight.w800))
+          ]),
+          if (status == 'ACCEPTED' || status == 'PICKED_UP')
+            Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: OutlinedButton.icon(
+                    onPressed: _sharing ? _stopLocation : _startLocation,
+                    icon: Icon(_sharing
+                        ? Icons.location_on
+                        : Icons.location_searching),
+                    label: Text(_sharing
+                        ? 'Stop live location'
+                        : 'Share live location'))),
+        ]));
+  }
+
+  String _orderStatus(String status) => switch (status) {
+        'ASSIGNED' => 'DRIVER_ASSIGNED',
+        'ACCEPTED' => 'ACCEPTED',
+        'PICKED_UP' => 'OUT_FOR_DELIVERY',
+        'DELIVERED' => 'DELIVERED',
+        _ => status
+      };
 }

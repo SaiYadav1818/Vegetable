@@ -6,9 +6,10 @@ class DeviceServices {
   static const _channel = MethodChannel('freshbasket/device');
 
   Future<Map<String, double>> currentLocation() async {
-    if (kIsWeb)
+    if (kIsWeb) {
       throw UnsupportedError(
           'Location sharing is available in the Android app.');
+    }
     final value =
         await _channel.invokeMapMethod<String, dynamic>('currentLocation');
     if (value == null ||
@@ -26,4 +27,27 @@ class DeviceServices {
     if (kIsWeb) return;
     await _channel.invokeMethod<void>('openExternalUrl', {'url': url});
   }
+
+  Future<PickedImage?> pickProductImage() async {
+    if (kIsWeb) {
+      throw UnsupportedError(
+          'Product image selection is available in the Android app.');
+    }
+    final value =
+        await _channel.invokeMapMethod<String, dynamic>('pickProductImage');
+    if (value == null) return null;
+    final bytes = value['bytes'];
+    if (bytes is! Uint8List) {
+      throw StateError('The selected image could not be read.');
+    }
+    return PickedImage(
+        bytes: bytes,
+        fileName: value['fileName']?.toString() ?? 'product-image.jpg');
+  }
+}
+
+class PickedImage {
+  const PickedImage({required this.bytes, required this.fileName});
+  final Uint8List bytes;
+  final String fileName;
 }

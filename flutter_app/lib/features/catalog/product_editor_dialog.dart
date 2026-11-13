@@ -1,5 +1,8 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import '../../core/platform/device_services.dart';
+import '../../core/theme/app_theme.dart';
+import '../../core/widgets/design_components.dart';
 import 'catalog_api.dart';
 import 'catalog_models.dart';
 
@@ -31,6 +34,8 @@ class _ProductEditorDialogState extends State<ProductEditorDialog> {
   bool _available = true;
   bool _saving = false;
   String? _error;
+  PickedImage? _pickedImage;
+  final _device = const DeviceServices();
 
   @override
   void initState() {
@@ -59,9 +64,10 @@ class _ProductEditorDialogState extends State<ProductEditorDialog> {
       _error = null;
     });
     try {
-      final product = widget.product;
-      if (product == null) {
-        await widget.api.createProduct(
+      final oldProduct = widget.product;
+      late Product savedProduct;
+      if (oldProduct == null) {
+        savedProduct = await widget.api.createProduct(
             name: _name.text.trim(),
             description: _description.text,
             categoryId: _categoryId!,
@@ -73,7 +79,7 @@ class _ProductEditorDialogState extends State<ProductEditorDialog> {
             active: _active,
             available: _available);
       } else {
-        await widget.api.updateProduct(product.id,
+        savedProduct = await widget.api.updateProduct(oldProduct.id,
             name: _name.text.trim(),
             description: _description.text,
             categoryId: _categoryId!,
@@ -83,6 +89,19 @@ class _ProductEditorDialogState extends State<ProductEditorDialog> {
             minimumStock: num.parse(_minimum.text),
             active: _active,
             available: _available);
+      }
+      if (_pickedImage != null) {
+        try {
+          savedProduct = await widget.api.uploadProductImageBytes(
+              savedProduct.id, _pickedImage!.bytes,
+              fileName: _pickedImage!.fileName);
+        } on DioException catch (e) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                content: Text(
+                    'Product saved, but the image could not be uploaded: ${widget.api.describeError(e)}')));
+          }
+        }
       }
       if (mounted) Navigator.pop(context, true);
     } on DioException catch (e) {
@@ -94,6 +113,17 @@ class _ProductEditorDialogState extends State<ProductEditorDialog> {
       }
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _chooseImage() async {
+    try {
+      final image = await _device.pickProductImage();
+      if (image != null && mounted) setState(() => _pickedImage = image);
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = 'Could not open the image picker: $e');
+      }
     }
   }
 
@@ -143,6 +173,48 @@ class _ProductEditorDialogState extends State<ProductEditorDialog> {
                           key: _form,
                           child:
                               Column(mainAxisSize: MainAxisSize.min, children: [
+                            Container(
+                                width: double.infinity,
+                                padding: const EdgeInsets.all(12),
+                                decoration: BoxDecoration(
+                                    color: AppColors.background,
+                                    borderRadius:
+                                        BorderRadius.circular(AppRadius.md)),
+                                child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      ClipRRect(
+                                          borderRadius: BorderRadius.circular(
+                                              AppRadius.sm),
+                                          child: SizedBox(
+                                              height: 130,
+                                              width: double.infinity,
+                                              child: _pickedImage != null
+                                                  ? Image.memory(
+                                                      _pickedImage!.bytes,
+                                                      fit: BoxFit.cover)
+                                                  : widget.product?.imageUrl !=
+                                                          null
+                                                      ? ProductImageView(
+                                                          url: widget.product!
+                                                              .imageUrl)
+                                                      : const ProductImageView())),
+                                      const SizedBox(height: 9),
+                                      OutlinedButton.icon(
+                                          onPressed: _chooseImage,
+                                          icon: const Icon(Icons
+                                              .add_photo_alternate_outlined),
+                                          label: Text(_pickedImage == null
+                                              ? 'Choose product image'
+                                              : 'Change image')),
+                                      Text(
+                                          _pickedImage?.fileName ??
+                                              'Use a clear, well-lit vegetable photo.',
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .bodySmall),
+                                    ])),
                             TextFormField(
                                 controller: _name,
                                 decoration:
@@ -202,10 +274,6 @@ class _ProductEditorDialogState extends State<ProductEditorDialog> {
                                         }
                                       }))
                             ]),
-                            TextFormField(
-                                controller: _imageUrl,
-                                decoration: const InputDecoration(
-                                    labelText: 'Image URL (optional)')),
                             if (widget.product == null)
                               TextFormField(
                                   controller: _stock,

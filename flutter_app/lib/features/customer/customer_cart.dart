@@ -46,14 +46,16 @@ class CustomerCart extends ChangeNotifier {
 
   Future<void> add(Product product) async {
     final current = quantityFor(product.id);
-    if (current + 1 > product.stock)
+    if (current + 1 > product.stock) {
       throw StateError('Requested quantity exceeds current stock');
+    }
     await _update(() => _gateway.addItem(product.id));
   }
 
   Future<void> increment(CartLine line) async {
-    if (line.quantity + 1 > line.stock)
+    if (line.quantity + 1 > line.stock) {
       throw StateError('Requested quantity exceeds current stock');
+    }
     await _update(() => _gateway.updateItem(line.id, line.quantity + 1));
   }
 

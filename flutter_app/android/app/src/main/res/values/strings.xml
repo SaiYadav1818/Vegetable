@@ -1,0 +1,3 @@
+<resources>
+    <string name="freshbasket_notification_channel">FreshBasket order updates</string>
+</resources>

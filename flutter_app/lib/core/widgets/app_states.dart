@@ -69,22 +69,36 @@ class EmptyState extends StatelessWidget {
       {super.key,
       required this.icon,
       required this.title,
-      required this.message});
+      required this.message,
+      this.actionLabel,
+      this.onAction});
   final IconData icon;
   final String title;
   final String message;
+  final String? actionLabel;
+  final VoidCallback? onAction;
   @override
   Widget build(BuildContext context) => Center(
         child: Padding(
           padding: const EdgeInsets.all(32),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(icon, size: 52, color: AppColors.green),
-            const SizedBox(height: 12),
+            Container(
+                width: 86,
+                height: 86,
+                decoration: const BoxDecoration(
+                    color: AppColors.paleGreen, shape: BoxShape.circle),
+                child: Icon(icon, size: 42, color: AppColors.green)),
+            const SizedBox(height: 18),
             Text(title, style: Theme.of(context).textTheme.titleMedium),
             const SizedBox(height: 6),
             Text(message,
                 textAlign: TextAlign.center,
                 style: Theme.of(context).textTheme.bodySmall),
+            if (actionLabel != null && onAction != null) ...[
+              const SizedBox(height: 18),
+              FilledButton.tonal(
+                  onPressed: onAction, child: Text(actionLabel!)),
+            ],
           ]),
         ),
       );

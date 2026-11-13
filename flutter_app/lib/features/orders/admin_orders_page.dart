@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../core/network/api_client.dart';
+import '../../core/theme/app_theme.dart';
+import '../../core/widgets/app_states.dart';
+import '../../core/widgets/design_components.dart';
 import 'order_models.dart';
 import 'orders_api.dart';
 
@@ -24,11 +27,18 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
   }
 
   void _error(Object error) {
-    if (mounted)
+    if (mounted) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(_api.describeError(error))));
+    }
   }
 
+  List<String> _next(String status) => switch (status) {
+        'PLACED' => ['ACCEPTED', 'REJECTED'],
+        'ACCEPTED' => ['PREPARING'],
+        'PREPARING' => ['READY_FOR_PICKUP'],
+        _ => [],
+      };
   Future<void> _changeStatus(OrderRecord order, String status) async {
     try {
       await _api.updateAdminStatus(order.id, status);
@@ -39,10 +49,10 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
   }
 
   Future<void> _createDriver() async {
-    final name = TextEditingController();
-    final email = TextEditingController();
-    final phone = TextEditingController();
-    final password = TextEditingController();
+    final name = TextEditingController(),
+        email = TextEditingController(),
+        phone = TextEditingController(),
+        password = TextEditingController();
     final saved = await showDialog<bool>(
         context: context,
         builder: (context) => AlertDialog(
@@ -51,6 +61,7 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
                   child: Column(mainAxisSize: MainAxisSize.min, children: [
                 TextField(
                     controller: name,
+                    textCapitalization: TextCapitalization.words,
                     decoration: const InputDecoration(labelText: 'Full name')),
                 TextField(
                     controller: email,
@@ -103,7 +114,8 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
     }
     if (!mounted) return;
     final available = _drivers
-        .where((d) => d['online'] == true && d['available'] == true)
+        .where(
+            (driver) => driver['online'] == true && driver['available'] == true)
         .toList();
     final id = await showDialog<int>(
         context: context,
@@ -114,9 +126,11 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
                   const Padding(
                       padding: EdgeInsets.all(16),
                       child: Text('No drivers are online and available.')),
-                ...available.map((d) => SimpleDialogOption(
-                    onPressed: () => Navigator.pop(ctx, d['userId'] as int),
-                    child: Text('${d['fullName']} · ${d['phoneNumber']}'))),
+                ...available.map((driver) => SimpleDialogOption(
+                    onPressed: () =>
+                        Navigator.pop(ctx, driver['userId'] as int),
+                    child: Text(
+                        '${driver['fullName']} · ${driver['phoneNumber']}'))),
                 SimpleDialogOption(
                     onPressed: () => Navigator.pop(ctx),
                     child: const Text('Cancel')),
@@ -131,12 +145,6 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
     }
   }
 
-  List<String> _next(String status) => switch (status) {
-        'PLACED' => ['ACCEPTED', 'REJECTED'],
-        'ACCEPTED' => ['PREPARING'],
-        'PREPARING' => ['READY_FOR_PICKUP'],
-        _ => [],
-      };
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: AppBar(title: const Text('Orders & deliveries'), actions: [
@@ -144,66 +152,103 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
               tooltip: 'Add driver',
               onPressed: _createDriver,
               icon: const Icon(Icons.person_add_alt_1)),
-          IconButton(onPressed: _reload, icon: const Icon(Icons.refresh))
+          IconButton(
+              tooltip: 'Refresh',
+              onPressed: _reload,
+              icon: const Icon(Icons.refresh))
         ]),
         body: RefreshIndicator(
             onRefresh: _reload,
             child: FutureBuilder<List<OrderRecord>>(
                 future: _future,
                 builder: (context, snapshot) {
-                  if (snapshot.connectionState == ConnectionState.waiting)
-                    return const Center(child: CircularProgressIndicator());
-                  if (snapshot.hasError)
-                    return Center(
-                        child: TextButton(
-                            onPressed: _reload,
-                            child: const Text('Could not load orders. Retry')));
+                  if (snapshot.connectionState == ConnectionState.waiting) {
+                    return const LoadingState(
+                        message: 'Loading customer orders...');
+                  }
+                  if (snapshot.hasError) {
+                    return ErrorState(
+                        message: _api.describeError(snapshot.error!),
+                        onRetry: _reload);
+                  }
                   final orders = snapshot.data ?? [];
-                  if (orders.isEmpty)
-                    return const Center(child: Text('No orders yet'));
-                  return ListView.builder(
-                      itemCount: orders.length,
-                      itemBuilder: (context, index) {
-                        final order = orders[index];
-                        return Card(
-                            margin: const EdgeInsets.all(10),
-                            child: ExpansionTile(
-                              title: Text(
-                                  '${order.orderNumber} · ${order.status.replaceAll('_', ' ')}'),
-                              subtitle: Text(
-                                  '${order.recipientName} · Rs. ${order.totalAmount.toStringAsFixed(2)} · ${order.deliveryDate.day}/${order.deliveryDate.month}/${order.deliveryDate.year}'),
-                              children: [
-                                Padding(
-                                    padding: const EdgeInsets.all(14),
-                                    child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
+                  if (orders.isEmpty) {
+                    return const EmptyState(
+                        icon: Icons.receipt_long_outlined,
+                        title: 'No orders yet',
+                        message:
+                            'Customer orders will appear here when they are placed.');
+                  }
+                  return ListView(
+                      padding: const EdgeInsets.fromLTRB(12, 12, 12, 24),
+                      children: [
+                        Container(
+                            padding: const EdgeInsets.all(16),
+                            decoration: BoxDecoration(
+                                color: AppColors.paleGreen,
+                                borderRadius:
+                                    BorderRadius.circular(AppRadius.md)),
+                            child: Row(children: [
+                              const Icon(Icons.receipt_long_outlined,
+                                  color: AppColors.green),
+                              const SizedBox(width: 10),
+                              Expanded(
+                                  child: Text('${orders.length} latest orders',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .titleSmall
+                                          ?.copyWith(
+                                              fontWeight: FontWeight.w800)))
+                            ])),
+                        const SizedBox(height: 8),
+                        ...orders.map((order) => DeliveryOrderCard(
+                              title: order.orderNumber,
+                              subtitle:
+                                  '${order.recipientName} · ${order.deliveryDate.day}/${order.deliveryDate.month}/${order.deliveryDate.year}',
+                              status: order.status,
+                              details: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                        '${order.recipientPhone} · ${order.addressLine}, ${order.area}, ${order.pincode}'),
+                                    const SizedBox(height: 8),
+                                    ...order.items.map((item) => Padding(
+                                        padding: const EdgeInsets.symmetric(
+                                            vertical: 3),
+                                        child: Row(children: [
+                                          Expanded(
+                                              child: Text(
+                                                  '${item.name} · ${item.quantity} ${item.unit.toLowerCase()}')),
                                           Text(
-                                              '${order.recipientPhone} · ${order.addressLine}, ${order.area}, ${order.pincode}'),
-                                          ...order.items.map((item) => Text(
-                                              '${item.name}: ${item.quantity} ${item.unit}')),
-                                          Wrap(spacing: 8, children: [
-                                            ..._next(order.status).map(
-                                                (status) => OutlinedButton(
-                                                    onPressed: () =>
-                                                        _changeStatus(
-                                                            order, status),
-                                                    child: Text(
-                                                        status.replaceAll(
-                                                            '_', ' ')))),
-                                            if (order.status ==
-                                                'READY_FOR_PICKUP')
-                                              FilledButton.tonal(
-                                                  onPressed: () =>
-                                                      _assign(order),
-                                                  child: const Text(
-                                                      'Assign driver')),
-                                          ]),
-                                        ]))
+                                              '₹${item.lineTotal.toStringAsFixed(2)}')
+                                        ]))),
+                                    const Divider(height: 20),
+                                    Row(children: [
+                                      const Icon(Icons.payments_outlined,
+                                          color: AppColors.green, size: 18),
+                                      const SizedBox(width: 6),
+                                      const Expanded(
+                                          child: Text('Cash on delivery')),
+                                      Text(
+                                          '₹${order.totalAmount.toStringAsFixed(2)}',
+                                          style: const TextStyle(
+                                              fontWeight: FontWeight.w800))
+                                    ]),
+                                  ]),
+                              actions: [
+                                ..._next(order.status).map((status) =>
+                                    OutlinedButton(
+                                        onPressed: () =>
+                                            _changeStatus(order, status),
+                                        child:
+                                            Text(status.replaceAll('_', ' ')))),
+                                if (order.status == 'READY_FOR_PICKUP')
+                                  FilledButton.tonal(
+                                      onPressed: () => _assign(order),
+                                      child: const Text('Assign driver')),
                               ],
-                            ));
-                      });
+                            )),
+                      ]);
                 })),
       );
 }

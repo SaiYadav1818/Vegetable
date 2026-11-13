@@ -1,4 +1,5 @@
 import 'package:dio/dio.dart';
+import 'dart:typed_data';
 import '../../core/network/api_client.dart';
 import 'catalog_models.dart';
 
@@ -144,6 +145,20 @@ class CatalogApi {
   Future<Product> uploadProductImage(int productId, String filePath) async {
     final form = FormData.fromMap({
       'file': await MultipartFile.fromFile(filePath),
+    });
+    return Product.fromJson(
+      (await _client.dio.post<Map<String, dynamic>>(
+        '/api/admin/products/$productId/image',
+        data: form,
+      ))
+          .data!,
+    );
+  }
+
+  Future<Product> uploadProductImageBytes(int productId, Uint8List bytes,
+      {required String fileName}) async {
+    final form = FormData.fromMap({
+      'file': MultipartFile.fromBytes(bytes, filename: fileName),
     });
     return Product.fromJson(
       (await _client.dio.post<Map<String, dynamic>>(

@@ -1,6 +1,7 @@
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import '../../core/network/api_client.dart';
+import '../../core/theme/app_theme.dart';
 import '../../core/widgets/app_states.dart';
 import 'auth_api.dart';
 
@@ -93,10 +94,7 @@ class _AuthPageState extends State<AuthPage> {
                       child: Container(
                     height: 610,
                     decoration: BoxDecoration(
-                      gradient: const LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: [Color(0xFF1F6B32), Color(0xFF65A94C)]),
+                      color: AppColors.green,
                       borderRadius: BorderRadius.circular(28),
                     ),
                     padding: const EdgeInsets.all(40),

@@ -12,6 +12,7 @@ public class AdminOrdersController {
     private final OrderService orders; private final DeliveryService delivery;
     public AdminOrdersController(OrderService orders,DeliveryService delivery){this.orders=orders;this.delivery=delivery;}
     @GetMapping("/orders") public Page<OrderDtos.OrderResponse> orders(@PageableDefault(size=20,sort="createdAt",direction=Sort.Direction.DESC) Pageable pageable){return orders.adminOrders(pageable);}
+    @GetMapping("/orders/{id}") public OrderDtos.OrderResponse order(@PathVariable long id){return orders.adminOrder(id);}
     @PutMapping("/orders/{id}/status") public OrderDtos.OrderResponse status(@PathVariable long id,@Valid @RequestBody OrderDtos.OrderStatusRequest request,Authentication auth){return orders.adminStatus(id,request,auth.getName());}
     @PostMapping("/orders/{id}/assign-driver") public OrderDtos.OrderResponse assign(@PathVariable long id,@Valid @RequestBody OrderDtos.AssignDriverRequest request,Authentication auth){return delivery.assign(id,request.driverUserId(),auth.getName());}
     @PostMapping("/drivers") public OrderDtos.DriverResponse createDriver(@Valid @RequestBody OrderDtos.DriverCreateRequest request,Authentication auth){return delivery.createDriver(auth.getName(),request);}

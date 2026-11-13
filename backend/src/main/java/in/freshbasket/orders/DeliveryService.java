@@ -1,6 +1,7 @@
 package in.freshbasket.orders;
 
 import in.freshbasket.user.*;
+import in.freshbasket.notifications.BusinessNotificationPublisher;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.util.List;
@@ -15,10 +16,10 @@ import org.springframework.web.server.ResponseStatusException;
 public class DeliveryService {
     private final UserRepository users; private final DriverProfileRepository drivers; private final DriverAssignmentRepository assignments;
     private final DriverLocationRepository locations; private final DeliveryOtpRepository otps; private final OrderItemRepository orderItems;
-    private final PaymentRepository payments; private final PasswordEncoder encoder; private final OrderService orders;
+    private final PaymentRepository payments; private final PasswordEncoder encoder; private final OrderService orders; private final BusinessNotificationPublisher notificationPublisher;
     public DeliveryService(UserRepository users,DriverProfileRepository drivers,DriverAssignmentRepository assignments,DriverLocationRepository locations,
-            DeliveryOtpRepository otps,OrderItemRepository orderItems,PaymentRepository payments,PasswordEncoder encoder,OrderService orders){
-        this.users=users;this.drivers=drivers;this.assignments=assignments;this.locations=locations;this.otps=otps;this.orderItems=orderItems;this.payments=payments;this.encoder=encoder;this.orders=orders;
+            DeliveryOtpRepository otps,OrderItemRepository orderItems,PaymentRepository payments,PasswordEncoder encoder,OrderService orders,BusinessNotificationPublisher notificationPublisher){
+        this.users=users;this.drivers=drivers;this.assignments=assignments;this.locations=locations;this.otps=otps;this.orderItems=orderItems;this.payments=payments;this.encoder=encoder;this.orders=orders;this.notificationPublisher=notificationPublisher;
     }
 
     @Transactional public OrderDtos.DriverResponse createDriver(String email,OrderDtos.DriverCreateRequest request){
@@ -41,9 +42,11 @@ public class DeliveryService {
         if(!profile.getUser().isActive()||!profile.isOnline()||!profile.isAvailable())throw conflict("Driver is offline or already assigned");
         assignments.save(new DriverAssignment(order,profile,admin));profile.setAvailable(false);
         orders.changeStatus(order,OrderStatus.DRIVER_ASSIGNED,admin,"Assigned to "+profile.getUser().getFullName());
+        notificationPublisher.driverAssigned(order,profile.getUser());
         return orders.response(order,null);
     }
     @Transactional(readOnly=true) public Page<OrderDtos.DriverOrderResponse> assigned(String email,Pageable pageable){AppUser user=driver(email);return assignments.findByDriver_User_Id(user.getId(),pageable).map(this::driverOrderDto);}
+    @Transactional(readOnly=true) public OrderDtos.OrderResponse assignedOrder(long orderId,String email){AppUser user=driver(email);ownedAssignment(orderId,user.getId());CustomerOrder order=orders.getForAuthorizedDriver(orderId);return orders.response(order,null);}
     @Transactional public OrderDtos.DriverOrderResponse accept(long orderId,String email){
         AppUser user=driver(email);DriverAssignment a=ownedAssignment(orderId,user.getId());
         if(a.getStatus()!=AssignmentStatus.ASSIGNED)throw conflict("This delivery is no longer awaiting acceptance");

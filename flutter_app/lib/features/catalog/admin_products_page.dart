@@ -3,6 +3,9 @@ import 'package:flutter/material.dart';
 import 'catalog_api.dart';
 import 'catalog_models.dart';
 import '../../core/network/api_client.dart';
+import '../../core/theme/app_theme.dart';
+import '../../core/widgets/app_states.dart';
+import '../../core/widgets/design_components.dart';
 import 'admin_categories_page.dart';
 import 'product_editor_dialog.dart';
 
@@ -13,11 +16,13 @@ class AdminProductsPage extends StatefulWidget {
     required this.adminName,
     this.onSignOut,
     this.onOrders,
+    this.onDashboard,
   });
   final ApiClient client;
   final String adminName;
   final VoidCallback? onSignOut;
   final VoidCallback? onOrders;
+  final VoidCallback? onDashboard;
   @override
   State<AdminProductsPage> createState() => _AdminProductsPageState();
 }
@@ -25,6 +30,9 @@ class AdminProductsPage extends StatefulWidget {
 class _AdminProductsPageState extends State<AdminProductsPage> {
   late final CatalogApi _api = CatalogApi(widget.client);
   late Future<List<Product>> _products = _api.getProducts(admin: true);
+  late final Future<List<Category>> _categories = _api.getCategories();
+  String _query = '';
+  int? _categoryId;
   Future<void> _reload() async {
     setState(() => _products = _api.getProducts(admin: true));
     await _products;
@@ -144,6 +152,10 @@ class _AdminProductsPageState extends State<AdminProductsPage> {
           title: const Text('Products & inventory'),
           actions: [
             IconButton(
+                tooltip: 'Dashboard',
+                icon: const Icon(Icons.dashboard_outlined),
+                onPressed: widget.onDashboard),
+            IconButton(
                 tooltip: 'Orders',
                 icon: const Icon(Icons.receipt_long),
                 onPressed: widget.onOrders),
@@ -157,10 +169,6 @@ class _AdminProductsPageState extends State<AdminProductsPage> {
               tooltip: 'Refresh',
               onPressed: _reload,
               icon: const Icon(Icons.refresh),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              child: Center(child: Text(widget.adminName)),
             ),
           ],
         ),
@@ -189,64 +197,192 @@ class _AdminProductsPageState extends State<AdminProductsPage> {
                 ),
               );
             }
-            final items = snapshot.data ?? const <Product>[];
-            if (items.isEmpty) {
-              return const Center(
-                  child: Text('No products yet. Add your first vegetable.'));
+            final allItems = snapshot.data ?? const <Product>[];
+            final items = allItems
+                .where((product) =>
+                    (_categoryId == null ||
+                        product.categoryId == _categoryId) &&
+                    (_query.trim().isEmpty ||
+                        product.name
+                            .toLowerCase()
+                            .contains(_query.trim().toLowerCase())))
+                .toList();
+            if (allItems.isEmpty) {
+              return EmptyState(
+                  icon: Icons.inventory_2_outlined,
+                  title: 'No products yet',
+                  message:
+                      'Add your first vegetable to start building the FreshBasket catalog.',
+                  actionLabel: 'Add vegetable',
+                  onAction: () => _edit(null));
             }
             return RefreshIndicator(
               onRefresh: _reload,
-              child: ListView.separated(
-                padding: const EdgeInsets.all(16),
-                itemCount: items.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 8),
-                itemBuilder: (context, index) {
-                  final product = items[index];
-                  final low = product.stock <= product.minimumStock;
-                  return Card(
-                    child: ListTile(
-                      leading: CircleAvatar(
-                        backgroundColor: const Color(0xFFE8F5E9),
-                        foregroundImage: product.imageUrl == null
-                            ? null
-                            : NetworkImage(_imageUri(product.imageUrl!)),
-                        child: product.imageUrl == null
-                            ? const Icon(Icons.eco, color: Color(0xFF2E7D32))
-                            : null,
-                      ),
-                      title: Text(product.name),
-                      subtitle: Text(
-                        '${product.categoryName} | Rs. ${product.price}/${product.unit}\n'
-                        'Stock ${product.stock} ${product.unit} | minimum ${product.minimumStock} | ${product.active ? 'Active' : 'Inactive'}',
-                        style: TextStyle(color: low ? Colors.deepOrange : null),
-                      ),
-                      isThreeLine: true,
-                      trailing: PopupMenuButton<String>(
-                        onSelected: (action) {
-                          if (action == 'stock') _adjust(product);
-                          if (action == 'edit') _edit(product);
-                          if (action == 'deactivate') _deactivate(product);
-                        },
-                        itemBuilder: (_) => const [
-                          PopupMenuItem(
-                              value: 'stock', child: Text('Adjust inventory')),
-                          PopupMenuItem(
-                              value: 'edit', child: Text('Edit product')),
-                          PopupMenuItem(
-                              value: 'deactivate', child: Text('Deactivate')),
-                        ],
-                      ),
-                    ),
-                  );
-                },
-              ),
+              child: Column(children: [
+                Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                    child: AppSearchField(
+                        controller: _searchController,
+                        onChanged: (value) => setState(() => _query = value),
+                        hint: 'Search products')),
+                FutureBuilder<List<Category>>(
+                    future: _categories,
+                    builder: (context, categoriesSnapshot) {
+                      final categories =
+                          categoriesSnapshot.data ?? const <Category>[];
+                      return SizedBox(
+                          height: 48,
+                          child: ListView(
+                              scrollDirection: Axis.horizontal,
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 16),
+                              children: [
+                                Padding(
+                                    padding: const EdgeInsets.only(right: 8),
+                                    child: ChoiceChip(
+                                        label: const Text('All'),
+                                        selected: _categoryId == null,
+                                        onSelected: (_) => setState(
+                                            () => _categoryId = null))),
+                                ...categories.map((category) => Padding(
+                                    padding: const EdgeInsets.only(right: 8),
+                                    child: ChoiceChip(
+                                        label: Text(category.name),
+                                        selected: _categoryId == category.id,
+                                        onSelected: (_) => setState(() =>
+                                            _categoryId =
+                                                _categoryId == category.id
+                                                    ? null
+                                                    : category.id)))),
+                              ]));
+                    }),
+                Expanded(
+                    child: items.isEmpty
+                        ? const EmptyState(
+                            icon: Icons.search_off_rounded,
+                            title: 'No matching vegetables',
+                            message:
+                                'Clear the search or choose another category.')
+                        : ListView.separated(
+                            padding: const EdgeInsets.all(16),
+                            itemCount: items.length,
+                            separatorBuilder: (_, __) =>
+                                const SizedBox(height: 9),
+                            itemBuilder: (context, index) {
+                              final product = items[index];
+                              final low = product.stock <= product.minimumStock;
+                              return Card(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(12),
+                                  child: Row(children: [
+                                    SizedBox(
+                                        width: 68,
+                                        height: 68,
+                                        child: ProductImageView(
+                                            url: _imageUri(product.imageUrl),
+                                            borderRadius: BorderRadius.circular(
+                                                AppRadius.sm))),
+                                    const SizedBox(width: 12),
+                                    Expanded(
+                                        child: Column(
+                                            crossAxisAlignment:
+                                                CrossAxisAlignment.start,
+                                            children: [
+                                          Text(product.name,
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .titleSmall
+                                                  ?.copyWith(
+                                                      fontWeight:
+                                                          FontWeight.w800)),
+                                          const SizedBox(height: 3),
+                                          Text(
+                                              '${product.categoryName} · ₹${product.price}/${product.unit.toLowerCase()}',
+                                              style: Theme.of(context)
+                                                  .textTheme
+                                                  .bodySmall),
+                                          const SizedBox(height: 6),
+                                          Row(children: [
+                                            Container(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                        horizontal: 8,
+                                                        vertical: 4),
+                                                decoration: BoxDecoration(
+                                                    color: low
+                                                        ? const Color(
+                                                            0xFFFFF3E0)
+                                                        : AppColors.paleGreen,
+                                                    borderRadius:
+                                                        BorderRadius.circular(
+                                                            AppRadius.pill)),
+                                                child: Text(
+                                                    '${product.stock} ${product.unit.toLowerCase()}${low ? ' · Low' : ''}',
+                                                    style: TextStyle(
+                                                        fontSize: 11,
+                                                        color: low
+                                                            ? AppColors.orange
+                                                            : AppColors
+                                                                .darkGreen,
+                                                        fontWeight:
+                                                            FontWeight.w700))),
+                                            const SizedBox(width: 6),
+                                            Text(
+                                                product.active &&
+                                                        product.available
+                                                    ? 'Active'
+                                                    : 'Hidden',
+                                                style: Theme.of(context)
+                                                    .textTheme
+                                                    .labelSmall
+                                                    ?.copyWith(
+                                                        color:
+                                                            AppColors.muted)),
+                                          ]),
+                                        ])),
+                                    PopupMenuButton<String>(
+                                      onSelected: (action) {
+                                        if (action == 'stock') _adjust(product);
+                                        if (action == 'edit') _edit(product);
+                                        if (action == 'deactivate') {
+                                          _deactivate(product);
+                                        }
+                                      },
+                                      itemBuilder: (_) => const [
+                                        PopupMenuItem(
+                                            value: 'stock',
+                                            child: Text('Adjust inventory')),
+                                        PopupMenuItem(
+                                            value: 'edit',
+                                            child: Text('Edit product')),
+                                        PopupMenuItem(
+                                            value: 'deactivate',
+                                            child: Text('Deactivate')),
+                                      ],
+                                    ),
+                                  ]),
+                                ),
+                              );
+                            },
+                          )),
+              ]),
             );
           },
         ),
       );
 
-  String _imageUri(String value) {
-    final uri = Uri.parse(value);
-    return uri.hasScheme ? value : '${widget.client.dio.options.baseUrl}$value';
+  final _searchController = TextEditingController();
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  String? _imageUri(String? value) {
+    if (value == null || value.isEmpty) return null;
+    final uri = Uri.tryParse(value);
+    return uri?.hasScheme == true
+        ? value
+        : '${widget.client.dio.options.baseUrl}$value';
   }
 }

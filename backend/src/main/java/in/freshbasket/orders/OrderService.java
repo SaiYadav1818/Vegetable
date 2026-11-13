@@ -1,6 +1,7 @@
 package in.freshbasket.orders;
 
 import in.freshbasket.catalog.*;
+import in.freshbasket.notifications.BusinessNotificationPublisher;
 import in.freshbasket.user.*;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -23,14 +24,16 @@ public class OrderService {
     private final PaymentRepository payments; private final DeliveryOtpRepository otps; private final DriverAssignmentRepository assignments;
     private final DriverLocationRepository locations; private final ProductRepository products; private final InventoryRepository inventory;
     private final InventoryTransactionRepository inventoryTransactions; private final PasswordEncoder passwordEncoder;
+    private final BusinessNotificationPublisher notificationPublisher;
     private final BigDecimal minimumOrder; private final BigDecimal deliveryCharge;
     public OrderService(UserRepository users,CartRepository carts,CartItemRepository cartItems,OrderRepository orders,OrderItemRepository orderItems,
             OrderHistoryRepository history,PaymentRepository payments,DeliveryOtpRepository otps,DriverAssignmentRepository assignments,
             DriverLocationRepository locations,ProductRepository products,InventoryRepository inventory,InventoryTransactionRepository inventoryTransactions,
-            PasswordEncoder passwordEncoder,@Value("${app.order.minimum-value:0.00}") BigDecimal minimumOrder,
+            PasswordEncoder passwordEncoder,BusinessNotificationPublisher notificationPublisher,@Value("${app.order.minimum-value:0.00}") BigDecimal minimumOrder,
             @Value("${app.order.delivery-charge:0.00}") BigDecimal deliveryCharge){
         this.users=users;this.carts=carts;this.cartItems=cartItems;this.orders=orders;this.orderItems=orderItems;this.history=history;this.payments=payments;
         this.otps=otps;this.assignments=assignments;this.locations=locations;this.products=products;this.inventory=inventory;this.inventoryTransactions=inventoryTransactions;
+        this.notificationPublisher=notificationPublisher;
         this.passwordEncoder=passwordEncoder;this.minimumOrder=minimumOrder;this.deliveryCharge=deliveryCharge;
     }
 
@@ -54,15 +57,17 @@ public class OrderService {
                 request.area().trim(),clean(request.landmark()),request.pincode(),clean(request.deliveryInstructions()),request.deliveryDate(),request.deliverySlot(),request.latitude(),request.longitude());
         order=orders.save(order);
         for(LockedLine line:checked){
-            line.stock().adjust(line.item().getQuantity().negate());
+            BigDecimal previous=line.stock().getQuantity();line.stock().adjust(line.item().getQuantity().negate());
             orderItems.save(new OrderItem(order,line.product(),line.item().getQuantity(),line.product().getPrice()));
-            inventoryTransactions.save(new InventoryTransaction(line.product(),customer,line.item().getQuantity().negate(),line.stock().getQuantity(),"ORDER_PLACED",order.getOrderNumber()));
+            InventoryTransaction transaction=inventoryTransactions.save(new InventoryTransaction(line.product(),customer,line.item().getQuantity().negate(),line.stock().getQuantity(),"ORDER_PLACED",order.getOrderNumber()));
+            if(previous.compareTo(line.stock().getMinimumStock())>0&&line.stock().getQuantity().compareTo(line.stock().getMinimumStock())<=0)notificationPublisher.lowStock(line.product(),line.stock().getQuantity(),line.stock().getMinimumStock(),transaction.getId());
         }
         payments.save(new Payment(order,total));
         history.save(new OrderStatusHistory(order,null,OrderStatus.PLACED,customer,"Customer placed COD order"));
         String otp=String.format(Locale.ROOT,"%06d",RANDOM.nextInt(1_000_000));
         otps.save(new DeliveryOtp(order,passwordEncoder.encode(otp),Instant.now().plusSeconds(48*60*60)));
         cartItems.deleteByCart_Id(cart.getId());
+        notificationPublisher.orderPlaced(order);
         return response(order,otp);
     }
 
@@ -80,6 +85,7 @@ public class OrderService {
     }
 
     @Transactional(readOnly=true) public Page<OrderDtos.OrderResponse> adminOrders(Pageable pageable){return orders.findAll(pageable).map(o->response(o,null));}
+    @Transactional(readOnly=true) public OrderDtos.OrderResponse adminOrder(long id){return response(orders.findById(id).orElseThrow(()->notFound("Order not found")),null);}
     @Transactional public OrderDtos.OrderResponse adminStatus(long id,OrderDtos.OrderStatusRequest request,String email){
         AppUser admin=admin(email);CustomerOrder order=orders.findLocked(id).orElseThrow(()->notFound("Order not found"));OrderStatus next=request.status();
         boolean valid=switch(order.getStatus()){
@@ -93,8 +99,9 @@ public class OrderService {
     }
 
     CustomerOrder lockOrder(long id){return orders.findLocked(id).orElseThrow(()->notFound("Order not found"));}
+    CustomerOrder getForAuthorizedDriver(long id){return orders.findById(id).orElseThrow(()->notFound("Order not found"));}
     AppUser requireAdmin(String email){return admin(email);}
-    void changeStatus(CustomerOrder order,OrderStatus next,AppUser actor,String reason){OrderStatus old=order.getStatus();order.status(next);history.save(new OrderStatusHistory(order,old,next,actor,reason));}
+    void changeStatus(CustomerOrder order,OrderStatus next,AppUser actor,String reason){OrderStatus old=order.getStatus();order.status(next);history.save(new OrderStatusHistory(order,old,next,actor,reason));notificationPublisher.orderStatus(order,next);}
     void restoreStock(CustomerOrder order,AppUser actor,String reason){
         for(OrderItem line:orderItems.findByOrder_IdOrderById(order.getId())){
             Product product=products.findById(line.getProductId()).orElseThrow(()->notFound("Product not found"));

@@ -1,6 +1,7 @@
 package in.freshbasket.catalog;
 
 import in.freshbasket.user.UserRepository;
+import in.freshbasket.notifications.BusinessNotificationPublisher;
 import java.math.BigDecimal;
 import java.net.URI;
 import org.springframework.data.domain.*;
@@ -12,8 +13,8 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class CatalogService {
     private final CategoryRepository categories; private final ProductRepository products; private final InventoryRepository inventory;
-    private final InventoryTransactionRepository transactions; private final UserRepository users;
-    public CatalogService(CategoryRepository categories,ProductRepository products,InventoryRepository inventory,InventoryTransactionRepository transactions,UserRepository users){this.categories=categories;this.products=products;this.inventory=inventory;this.transactions=transactions;this.users=users;}
+    private final InventoryTransactionRepository transactions; private final UserRepository users; private final BusinessNotificationPublisher notificationPublisher;
+    public CatalogService(CategoryRepository categories,ProductRepository products,InventoryRepository inventory,InventoryTransactionRepository transactions,UserRepository users,BusinessNotificationPublisher notificationPublisher){this.categories=categories;this.products=products;this.inventory=inventory;this.transactions=transactions;this.users=users;this.notificationPublisher=notificationPublisher;}
 
     @Transactional(readOnly=true) public java.util.List<CatalogDtos.CategoryResponse> categories(){return categories.findByActiveTrueOrderByNameAsc().stream().map(this::categoryDto).toList();}
     @Transactional public CatalogDtos.CategoryResponse createCategory(CatalogDtos.CategoryRequest r){String name=r.name().trim();if(categories.existsByNameIgnoreCase(name))throw conflict("Category name already exists");return categoryDto(categories.save(new Category(name,clean(r.description()))));}
@@ -44,9 +45,10 @@ public class CatalogService {
     @Transactional public CatalogDtos.ProductResponse setProductImage(long id,String imageUrl){Product p=products.findById(id).orElseThrow(()->notFound("Product not found"));p.imageUrl(imageUrl);return productDto(p);}
     @Transactional public CatalogDtos.ProductResponse adjustInventory(long id,CatalogDtos.InventoryAdjustment r,String actorEmail){
         Product p=products.findById(id).orElseThrow(()->notFound("Product not found"));Inventory i=inventory.findLockedByProductId(id).orElseThrow(()->notFound("Inventory not found"));
-        BigDecimal next=i.getQuantity().add(r.delta());if(next.signum()<0)throw badRequest("Inventory cannot be reduced below zero");
+        BigDecimal previous=i.getQuantity();BigDecimal next=previous.add(r.delta());if(next.signum()<0)throw badRequest("Inventory cannot be reduced below zero");
         i.adjust(r.delta());if(r.minimumStock()!=null)i.minimumStock(r.minimumStock());
-        if(r.delta().signum()!=0)transactions.save(new InventoryTransaction(p,actor(actorEmail),r.delta(),next,r.reason().trim(),clean(r.note())));
+        if(r.delta().signum()!=0){InventoryTransaction transaction=transactions.save(new InventoryTransaction(p,actor(actorEmail),r.delta(),next,r.reason().trim(),clean(r.note())));
+            if(previous.compareTo(i.getMinimumStock())>0&&next.compareTo(i.getMinimumStock())<=0)notificationPublisher.lowStock(p,next,i.getMinimumStock(),transaction.getId());}
         return productDto(p);
     }
     @Transactional(readOnly=true) public Page<CatalogDtos.InventoryTransactionResponse> history(long productId,Pageable pageable){if(!products.existsById(productId))throw notFound("Product not found");return transactions.findByProduct_Id(productId,pageable).map(t->new CatalogDtos.InventoryTransactionResponse(t.getId(),t.getQuantityDelta(),t.getQuantityAfter(),t.getReason(),t.getNote(),t.getCreatedAt()));}
