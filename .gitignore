@@ -8,3 +8,5 @@ target/
 build/
 .dart_tool/
 flutter_app/.packages
+flutter_app/.flutter-plugins
+flutter_app/.flutter-plugins-dependencies

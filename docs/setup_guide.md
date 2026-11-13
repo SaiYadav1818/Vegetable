@@ -17,7 +17,7 @@ cd backend
 mvn spring-boot:run
 ```
 
-The API starts at `http://localhost:8080`. Flyway creates the identity tables on first launch. For an existing MySQL instance, set `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD`. Override the development JWT secret with a private random value using `JWT_SECRET` before deployment.
+The API starts at `http://localhost:8080`. Flyway creates the identity, catalog, and inventory tables on first launch. For an existing MySQL instance, set `DB_URL`, `DB_USERNAME`, and `DB_PASSWORD`. Override the development JWT secret with a private random value using `JWT_SECRET` before deployment.
 
 ## Authentication
 
@@ -26,6 +26,20 @@ The API starts at `http://localhost:8080`. Flyway creates the identity tables on
 
 Both return an access token and basic user details. Send the token as `Authorization: Bearer <token>` to protected endpoints. Swagger UI is available at `/swagger-ui/index.html`.
 
+## First admin account
+
+Before the first API startup, set `ADMIN_BOOTSTRAP_ENABLED=true`, `ADMIN_BOOTSTRAP_EMAIL`, and `ADMIN_BOOTSTRAP_PASSWORD` (at least 12 characters) in the process environment. The startup hook creates one ADMIN with a BCrypt password only when the database has no admin; after it is created, disable the bootstrap flag. Keep the password out of source control. Public registration remains CUSTOMER-only.
+
+## Flutter client
+
+```powershell
+cd flutter_app
+flutter pub get
+flutter run
+```
+
+Android emulator defaults to `http://10.0.2.2:8080`; desktop and Web default to `http://localhost:8080`. Override with `flutter run --dart-define=API_BASE_URL=http://your-host:8080`. The current Flutter client supports admin sign-in and live category, product, and inventory management. The Android debug manifest permits local HTTP during development; release Android builds keep cleartext traffic disabled. Flutter Web uses a development CORS allowlist for localhost origins.
+
 ## Current phase boundary
 
-This first phase establishes identity and authorization foundations. Refresh/logout token revocation, account recovery, business-domain tables, Flutter screens, products, orders, and delivery workflows are scheduled for later phases. The local JWT currently expires after 60 minutes and is stateless.
+This phase adds catalog maintenance and inventory adjustments on top of the identity foundations. Refresh/logout token revocation, account recovery, image file uploads, customer shopping, order workflows, and delivery features remain for later phases. The local JWT currently expires after 60 minutes and is stateless.
