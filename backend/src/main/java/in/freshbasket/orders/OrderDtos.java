@@ -12,7 +12,9 @@ public final class OrderDtos {
     public record CartQuantityRequest(@NotNull @DecimalMin("0.001") @Digits(integer=9,fraction=3) BigDecimal quantity){}
     public record CartLineResponse(Long id,Long productId,String name,String imageUrl,String unit,BigDecimal price,BigDecimal quantity,BigDecimal stock,BigDecimal lineTotal,boolean available){}
     public record CartResponse(List<CartLineResponse> items,BigDecimal subtotal){}
-    public record CheckoutRequest(@NotNull @DecimalMin("0.00") @Digits(integer=10,fraction=2) BigDecimal expectedSubtotal,
+    public record CheckoutRequest(
+            @Size(max=64) String idempotencyKey,
+            @NotNull @DecimalMin("0.00") @Digits(integer=10,fraction=2) BigDecimal expectedSubtotal,
             @NotBlank @Size(max=120) String recipientName,@NotBlank @Pattern(regexp="^[0-9+() -]{7,20}$") String recipientPhone,
             @NotBlank @Size(max=300) String addressLine,@Size(max=100) String houseNumber,@NotBlank @Size(max=120) String area,
             @Size(max=160) String landmark,@NotBlank @Pattern(regexp="^[0-9]{6}$") String pincode,@Size(max=500) String deliveryInstructions,
@@ -25,7 +27,7 @@ public final class OrderDtos {
             BigDecimal subtotal,BigDecimal deliveryCharge,BigDecimal totalAmount,String recipientName,String recipientPhone,
             String addressLine,String houseNumber,String area,String landmark,String pincode,String deliveryInstructions,
             LocalDate deliveryDate,DeliverySlot deliverySlot,Instant createdAt,List<OrderItemResponse> items,
-            List<StatusEvent> statusHistory,String deliveryOtp,DriverLocationResponse driverLocation){}
+            List<StatusEvent> statusHistory,String deliveryOtp,DriverLocationResponse driverLocation,String idempotencyKey){}
     public record OrderStatusRequest(@NotNull OrderStatus status,@Size(max=300) String reason){}
     public record CancelRequest(@Size(max=300) String reason){}
     public record DeliveryCodeResponse(String deliveryOtp){}
@@ -40,5 +42,13 @@ public final class OrderDtos {
     public record AvailabilityRequest(boolean online){}
     public record DriverLocationRequest(@NotNull @DecimalMin("-90.0") @DecimalMax("90.0") BigDecimal latitude,
             @NotNull @DecimalMin("-180.0") @DecimalMax("180.0") BigDecimal longitude){}
-    public record DeliverRequest(@NotBlank @Pattern(regexp="^[0-9]{6}$") String otp,@AssertTrue boolean cashCollected){}
+    public record DeliverRequest(@NotBlank @Pattern(regexp="^[0-9]{6}$") String otp, boolean cashCollected){}
+    public record DeliveryFailRequest(@NotBlank @Size(max=300) String reason){}
+    public record ReconcilePaymentRequest(@Size(max=300) String note){}
+    public record PaymentReconciliationItem(Long paymentId,Long orderId,String orderNumber,BigDecimal amount,PaymentStatus status,
+            Long driverUserId,String driverName,String driverPhone,Instant collectedAt,boolean reconciled,Instant reconciledAt,String note){}
+    public record DriverReconciliationSummary(Long driverUserId,String driverName,String driverPhone,
+            long unsettledCount,BigDecimal unsettledAmount,long settledCount,BigDecimal settledAmount){}
+    public record CodReconciliationReport(BigDecimal totalCollected,BigDecimal totalSettled,BigDecimal totalUnsettled,
+            long unpaidDeliveredCount,List<DriverReconciliationSummary> drivers,List<PaymentReconciliationItem> unsettledPayments){}
 }

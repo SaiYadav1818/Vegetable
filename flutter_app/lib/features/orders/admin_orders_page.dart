@@ -37,6 +37,7 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
         'PLACED' => ['ACCEPTED', 'REJECTED'],
         'ACCEPTED' => ['PREPARING'],
         'PREPARING' => ['READY_FOR_PICKUP'],
+        'DELIVERY_FAILED' => ['READY_FOR_PICKUP', 'CANCELLED'],
         _ => [],
       };
   Future<void> _changeStatus(OrderRecord order, String status) async {
@@ -242,10 +243,10 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
                                             _changeStatus(order, status),
                                         child:
                                             Text(status.replaceAll('_', ' ')))),
-                                if (order.status == 'READY_FOR_PICKUP')
+                                if (order.status == 'READY_FOR_PICKUP' || order.status == 'DELIVERY_FAILED')
                                   FilledButton.tonal(
                                       onPressed: () => _assign(order),
-                                      child: const Text('Assign driver')),
+                                      child: Text(order.status == 'DELIVERY_FAILED' ? 'Reassign driver' : 'Assign driver')),
                               ],
                             )),
                       ]);

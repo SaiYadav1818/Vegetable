@@ -12,10 +12,13 @@ interface DriverProfileRepository extends JpaRepository<DriverProfile,Long>{
     Optional<DriverProfile> findLocked(@Param("id") Long userId);
 }
 interface DriverAssignmentRepository extends JpaRepository<DriverAssignment,Long>{
-    Optional<DriverAssignment> findByOrder_Id(Long orderId);
+    Optional<DriverAssignment> findFirstByOrder_IdOrderByAssignedAtDesc(Long orderId);
+    Optional<DriverAssignment> findFirstByOrder_IdAndStatusIn(Long orderId,Collection<AssignmentStatus> statuses);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select a from DriverAssignment a where a.id=:id") Optional<DriverAssignment> findLocked(@Param("id") Long id);
-    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select a from DriverAssignment a where a.order.id=:id") Optional<DriverAssignment> findLockedByOrderId(@Param("id") Long orderId);
+    @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select a from DriverAssignment a where a.order.id=:id and a.status in :statuses")
+    Optional<DriverAssignment> findLockedByOrderIdAndStatusIn(@Param("id") Long orderId,@Param("statuses") Collection<AssignmentStatus> statuses);
     Page<DriverAssignment> findByDriver_User_Id(Long driverId,Pageable pageable);
     List<DriverAssignment> findByDriver_User_IdAndStatusIn(Long driverId,Collection<AssignmentStatus> statuses);
+    List<DriverAssignment> findByOrder_IdOrderByAssignedAtAsc(Long orderId);
 }
 interface DriverLocationRepository extends JpaRepository<DriverLocation,Long>{Optional<DriverLocation> findByAssignment_IdAndActiveTrue(Long assignmentId);}

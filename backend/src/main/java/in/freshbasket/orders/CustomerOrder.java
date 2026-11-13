@@ -29,6 +29,7 @@ public class CustomerOrder {
     @Enumerated(EnumType.STRING) @Column(name="delivery_slot",nullable=false,length=20) private DeliverySlot deliverySlot;
     @Column(precision=10,scale=7) private BigDecimal latitude;
     @Column(precision=10,scale=7) private BigDecimal longitude;
+    @Column(name="idempotency_key",length=64) private String idempotencyKey;
     @Column(name="created_at",nullable=false,updatable=false) private Instant createdAt;
     @Column(name="updated_at",nullable=false) private Instant updatedAt;
     @PrePersist void create(){createdAt=updatedAt=Instant.now();} @PreUpdate void update(){updatedAt=Instant.now();}
@@ -45,6 +46,7 @@ public class CustomerOrder {
     public String getRecipientName(){return recipientName;} public String getRecipientPhone(){return recipientPhone;} public String getAddressLine(){return addressLine;} public String getHouseNumber(){return houseNumber;}
     public String getArea(){return area;} public String getLandmark(){return landmark;} public String getPincode(){return pincode;} public String getDeliveryInstructions(){return deliveryInstructions;}
     public LocalDate getDeliveryDate(){return deliveryDate;} public DeliverySlot getDeliverySlot(){return deliverySlot;} public BigDecimal getLatitude(){return latitude;} public BigDecimal getLongitude(){return longitude;}
+    public String getIdempotencyKey(){return idempotencyKey;} public void setIdempotencyKey(String value){idempotencyKey=value;}
     public Instant getCreatedAt(){return createdAt;}
     public void status(OrderStatus value){status=value;}
     public void paymentStatus(PaymentStatus value){paymentStatus=value;}

@@ -34,10 +34,82 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   Future<_AdminData> _load() async {
     final result = await Future.wait<Object>([
       OrdersApi(widget.client).adminOrders(size: 100),
-      CatalogApi(widget.client).getProducts(admin: true, size: 100)
+      CatalogApi(widget.client).getProducts(admin: true, size: 100),
+      OrdersApi(widget.client).getCodReconciliationReport(),
     ]);
     return _AdminData(
-        result[0] as List<OrderRecord>, result[1] as List<Product>);
+        result[0] as List<OrderRecord>,
+        result[1] as List<Product>,
+        result[2] as CodReconciliationReport);
+  }
+
+  Future<void> _settleDriver(int driverId, String driverName) async {
+    try {
+      final count = await OrdersApi(widget.client)
+          .reconcileDriverPayments(driverId, note: 'Settled with counter');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('Settled $count payments for $driverName'),
+        behavior: SnackBarBehavior.floating,
+      ));
+      await _refresh();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(OrdersApi(widget.client).describeError(e)),
+      ));
+    }
+  }
+
+  void _showCodModal(CodReconciliationReport report) {
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) => Padding(
+        padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text('COD cash reconciliation',
+                style: Theme.of(ctx).textTheme.titleLarge),
+            const SizedBox(height: 6),
+            Text(
+              'Total collected: ₹${report.totalCollected.toStringAsFixed(2)} · Unsettled: ₹${report.totalUnsettled.toStringAsFixed(2)}',
+              style: const TextStyle(color: AppColors.muted),
+            ),
+            const Divider(height: 24),
+            if (report.drivers.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 24),
+                child: Center(child: Text('No drivers have collected cash yet.')),
+              )
+            else
+              ...report.drivers.map((d) => Card(
+                    margin: const EdgeInsets.only(bottom: 10),
+                    child: ListTile(
+                      title: Text(d.driverName,
+                          style: const TextStyle(fontWeight: FontWeight.w700)),
+                      subtitle: Text(
+                          'Unsettled: ₹${d.unsettledAmount.toStringAsFixed(2)} (${d.unsettledCount} orders)\nSettled: ₹${d.settledAmount.toStringAsFixed(2)}'),
+                      isThreeLine: true,
+                      trailing: d.unsettledAmount > 0
+                          ? FilledButton.tonal(
+                              onPressed: () {
+                                Navigator.pop(ctx);
+                                _settleDriver(d.driverUserId, d.driverName);
+                              },
+                              child: const Text('Settle'),
+                            )
+                          : const Icon(Icons.check_circle_rounded,
+                              color: AppColors.green),
+                    ),
+                  )),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -78,136 +150,142 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
               }
               final data = snapshot.data!;
               final now = DateTime.now();
-              final today = data.orders
+              final todayOrders = data.orders
                   .where((o) =>
                       o.createdAt.year == now.year &&
                       o.createdAt.month == now.month &&
                       o.createdAt.day == now.day)
-                  .length;
-              final pending =
-                  data.orders.where((o) => o.status == 'PLACED').length;
+                  .toList();
               final open = data.orders
-                  .where((o) => [
-                        'PLACED',
-                        'ACCEPTED',
-                        'PREPARING',
-                        'READY_FOR_PICKUP'
-                      ].contains(o.status))
-                  .length;
-              final deliveries = data.orders
                   .where((o) =>
-                      o.status == 'DRIVER_ASSIGNED' ||
-                      o.status == 'OUT_FOR_DELIVERY')
+                      o.status == 'PLACED' ||
+                      o.status == 'ACCEPTED' ||
+                      o.status == 'PREPARING' ||
+                      o.status == 'READY_FOR_PICKUP' ||
+                      o.status == 'DELIVERY_FAILED')
                   .length;
-              final delivered =
-                  data.orders.where((o) => o.status == 'DELIVERED').toList();
-              final revenue = delivered
-                  .where((o) => o.paymentStatus == 'PAID')
-                  .fold<num>(0, (sum, o) => sum + o.totalAmount);
-              final low =
-                  data.products.where((p) => p.stock <= p.minimumStock).length;
+              final low = data.products
+                  .where((p) => p.stock <= p.minimumStock)
+                  .length;
+              final cod = data.codReport;
+
               return RefreshIndicator(
                   onRefresh: _refresh,
                   child: ListView(
-                      padding: const EdgeInsets.fromLTRB(18, 12, 18, 24),
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
                       children: [
-                        Container(
-                            padding: const EdgeInsets.all(18),
-                            decoration: BoxDecoration(
-                                color: AppColors.paleGreen,
-                                borderRadius:
-                                    BorderRadius.circular(AppRadius.lg)),
-                            child: Row(children: [
-                              Container(
-                                  width: 46,
-                                  height: 46,
-                                  decoration: const BoxDecoration(
-                                      color: Colors.white,
-                                      shape: BoxShape.circle),
-                                  child: const Icon(Icons.eco_rounded,
-                                      color: AppColors.green)),
-                              const SizedBox(width: 12),
-                              Expanded(
-                                  child: Column(
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.start,
-                                      children: [
-                                    Text('Your store, at a glance',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleMedium
-                                            ?.copyWith(
-                                                fontWeight: FontWeight.w800)),
-                                    Text(
-                                        'Latest ${data.orders.length} orders and products in view',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .bodySmall)
-                                  ]))
-                            ])),
-                        const SectionTitle('Today at FreshBasket'),
+                        Card(
+                            color: AppColors.paleGreen,
+                            child: Padding(
+                                padding: const EdgeInsets.all(18),
+                                child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Row(children: [
+                                        Container(
+                                            width: 40,
+                                            height: 40,
+                                            decoration: const BoxDecoration(
+                                                color: Colors.white,
+                                                shape: BoxShape.circle),
+                                            child: const Icon(
+                                                Icons.storefront_rounded,
+                                                color: AppColors.green)),
+                                        const SizedBox(width: 12),
+                                        Expanded(
+                                            child: Column(
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.start,
+                                                children: [
+                                              Text('Daily operational summary',
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .titleMedium
+                                                      ?.copyWith(
+                                                          fontWeight:
+                                                              FontWeight.w800)),
+                                              Text(
+                                                  '${todayOrders.length} orders received today',
+                                                  style: Theme.of(context)
+                                                      .textTheme
+                                                      .bodySmall
+                                                      ?.copyWith(
+                                                          color:
+                                                              AppColors.muted))
+                                            ]))
+                                      ]),
+                                      const SizedBox(height: 14),
+                                      Wrap(spacing: 8, runSpacing: 8, children: [
+                                        MetricChip(
+                                            label: '$open open orders',
+                                            accent: open > 0
+                                                ? AppColors.orange
+                                                : AppColors.green),
+                                        MetricChip(
+                                            label: '$low low stock',
+                                            accent: low > 0
+                                                ? AppColors.error
+                                                : AppColors.green),
+                                        MetricChip(
+                                            label:
+                                                '₹${cod.totalUnsettled.toStringAsFixed(0)} COD unsettled',
+                                            accent: cod.totalUnsettled > 0
+                                                ? AppColors.orange
+                                                : AppColors.green),
+                                      ])
+                                    ]))),
+                        const SizedBox(height: 16),
+                        const SectionTitle('Store metrics'),
                         GridView.count(
+                            crossAxisCount: 2,
                             shrinkWrap: true,
                             physics: const NeverScrollableScrollPhysics(),
-                            crossAxisCount:
-                                MediaQuery.sizeOf(context).width > 800 ? 3 : 2,
-                            crossAxisSpacing: 10,
                             mainAxisSpacing: 10,
-                            childAspectRatio: 1.42,
+                            crossAxisSpacing: 10,
+                            childAspectRatio: 1.45,
                             children: [
                               DashboardStatCard(
-                                  title: 'Orders today',
-                                  value: '$today',
-                                  icon: Icons.today_outlined,
+                                  title: 'Open orders',
+                                  value: '$open',
+                                  icon: Icons.receipt_long_outlined,
+                                  accent: open > 0
+                                      ? AppColors.orange
+                                      : AppColors.green,
                                   onTap: widget.onOrders),
                               DashboardStatCard(
-                                  title: 'Pending orders',
-                                  value: '$pending',
-                                  icon: Icons.pending_actions_outlined,
-                                  accent: AppColors.orange,
-                                  onTap: widget.onOrders),
-                              DashboardStatCard(
-                                  title: 'On the way',
-                                  value: '$deliveries',
-                                  icon: Icons.delivery_dining,
-                                  accent: AppColors.orange,
-                                  onTap: widget.onOrders),
-                              DashboardStatCard(
-                                  title: 'Completed',
-                                  value: '${delivered.length}',
-                                  icon: Icons.task_alt_rounded,
-                                  onTap: widget.onOrders),
-                              DashboardStatCard(
-                                  title: 'Paid revenue',
-                                  value: '₹${revenue.toStringAsFixed(0)}',
+                                  title: 'COD Collected',
+                                  value: '₹${cod.totalCollected.toStringAsFixed(0)}',
                                   icon: Icons.currency_rupee_rounded,
-                                  onTap: widget.onOrders),
+                                  onTap: () => _showCodModal(cod)),
                               DashboardStatCard(
                                   title: 'Products',
                                   value: '${data.products.length}',
                                   icon: Icons.inventory_2_outlined,
                                   onTap: widget.onProducts),
                               DashboardStatCard(
-                                  title: 'Low stock',
-                                  value: '$low',
-                                  icon: Icons.inventory_2_outlined,
-                                  accent: low > 0
+                                  title: 'COD Unsettled',
+                                  value: '₹${cod.totalUnsettled.toStringAsFixed(0)}',
+                                  icon: Icons.account_balance_wallet_outlined,
+                                  accent: cod.totalUnsettled > 0
                                       ? AppColors.orange
                                       : AppColors.green,
-                                  onTap: widget.onProducts),
+                                  onTap: () => _showCodModal(cod)),
                             ]),
-                        Padding(
-                            padding: const EdgeInsets.fromLTRB(4, 10, 4, 12),
-                            child: Text(
-                                'Order and revenue figures use the latest ${data.orders.length} orders returned by the API.',
-                                style: const TextStyle(
-                                    color: AppColors.muted, fontSize: 12))),
+                        const SizedBox(height: 16),
                         const SectionTitle('Quick actions'),
+                        _ActionCard(
+                            icon: Icons.account_balance_wallet_outlined,
+                            title: 'COD Cash Reconciliation',
+                            subtitle:
+                                '₹${cod.totalUnsettled.toStringAsFixed(2)} held by drivers · Tap to reconcile',
+                            onTap: () => _showCodModal(cod)),
+                        const SizedBox(height: 10),
                         _ActionCard(
                             icon: Icons.inventory_2_outlined,
                             title: 'Manage products',
                             subtitle:
-                                '${data.products.length} products loaded · $low low stock',
+                                '${data.products.length} products · $low low stock',
                             onTap: widget.onProducts),
                         const SizedBox(height: 10),
                         _ActionCard(
@@ -255,7 +333,8 @@ class _ActionCard extends StatelessWidget {
 }
 
 class _AdminData {
-  const _AdminData(this.orders, this.products);
+  const _AdminData(this.orders, this.products, this.codReport);
   final List<OrderRecord> orders;
   final List<Product> products;
+  final CodReconciliationReport codReport;
 }

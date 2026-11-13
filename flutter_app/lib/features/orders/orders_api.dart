@@ -29,7 +29,8 @@ class OrdersApi implements CartGateway {
   }
 
   Future<OrderRecord> placeOrder(
-          {required CartSnapshot cart,
+          {String? idempotencyKey,
+          required CartSnapshot cart,
           required String recipientName,
           required String recipientPhone,
           required String addressLine,
@@ -44,6 +45,8 @@ class OrdersApi implements CartGateway {
           num? longitude}) async =>
       OrderRecord.fromJson(
           (await client.dio.post<Map<String, dynamic>>('/api/orders', data: {
+        if (idempotencyKey != null && idempotencyKey.isNotEmpty)
+          'idempotencyKey': idempotencyKey,
         'expectedSubtotal': cart.subtotal,
         'recipientName': recipientName,
         'recipientPhone': recipientPhone,
@@ -59,6 +62,7 @@ class OrdersApi implements CartGateway {
         'longitude': longitude,
       }))
               .data!);
+
   Future<List<OrderRecord>> myOrders({int page = 0, int size = 20}) async {
     final data = (await client.dio.get<Map<String, dynamic>>('/api/orders/my',
             queryParameters: {'page': page, 'size': size}))
@@ -70,14 +74,18 @@ class OrdersApi implements CartGateway {
 
   Future<OrderRecord> getOrder(int id) async => OrderRecord.fromJson(
       (await client.dio.get<Map<String, dynamic>>('/api/orders/$id')).data!);
+
   Future<OrderRecord> cancelOrder(int id, {String? reason}) async =>
       OrderRecord.fromJson((await client.dio.post<Map<String, dynamic>>(
               '/api/orders/$id/cancel',
-              data: {'reason': reason}))
+              data: reason == null ? null : {'reason': reason}))
           .data!);
-  Future<String> rotateDeliveryOtp(int id) async => (await client.dio
-          .post<Map<String, dynamic>>('/api/orders/$id/delivery-otp'))
-      .data!['deliveryOtp'] as String;
+
+  Future<String> rotateDeliveryOtp(int id) async {
+    final response = await client.dio
+        .post<Map<String, dynamic>>('/api/orders/$id/delivery-otp');
+    return response.data!['deliveryOtp'] as String;
+  }
 
   Future<List<OrderRecord>> adminOrders({int page = 0, int size = 30}) async {
     final data = (await client.dio.get<Map<String, dynamic>>(
@@ -89,38 +97,63 @@ class OrdersApi implements CartGateway {
         .toList();
   }
 
+  Future<OrderRecord> adminOrder(int id) async => OrderRecord.fromJson(
+      (await client.dio.get<Map<String, dynamic>>('/api/admin/orders/$id'))
+          .data!);
+
   Future<OrderRecord> updateAdminStatus(int id, String status,
           {String? reason}) async =>
       OrderRecord.fromJson((await client.dio.put<Map<String, dynamic>>(
               '/api/admin/orders/$id/status',
               data: {'status': status, 'reason': reason}))
           .data!);
-  Future<List<Map<String, dynamic>>> drivers(
-      {int page = 0, int size = 50}) async {
-    final data = (await client.dio.get<Map<String, dynamic>>(
-            '/api/admin/drivers',
-            queryParameters: {'page': page, 'size': size}))
-        .data!;
-    return ((data['content'] as List<dynamic>?) ?? const [])
-        .cast<Map<String, dynamic>>();
-  }
 
   Future<OrderRecord> assignDriver(int orderId, int driverUserId) async =>
       OrderRecord.fromJson((await client.dio.post<Map<String, dynamic>>(
               '/api/admin/orders/$orderId/assign-driver',
               data: {'driverUserId': driverUserId}))
           .data!);
+
+  Future<List<Map<String, dynamic>>> drivers() async {
+    final data =
+        (await client.dio.get<Map<String, dynamic>>('/api/admin/drivers'))
+            .data!;
+    return ((data['content'] as List<dynamic>?) ?? const [])
+        .map((e) => Map<String, dynamic>.from(e as Map))
+        .toList();
+  }
+
   Future<void> createDriver(
       {required String name,
       required String email,
       required String phone,
       required String password}) async {
-    await client.dio.post<void>('/api/admin/drivers', data: {
+    await client.dio.post<Map<String, dynamic>>('/api/admin/drivers', data: {
       'fullName': name,
       'email': email,
       'phoneNumber': phone,
       'password': password
     });
+  }
+
+  // COD Reconciliation Reports
+  Future<CodReconciliationReport> getCodReconciliationReport() async {
+    final data = (await client.dio
+            .get<Map<String, dynamic>>('/api/admin/reports/cod-reconciliation'))
+        .data!;
+    return CodReconciliationReport.fromJson(data);
+  }
+
+  Future<void> reconcilePayment(int paymentId, {String? note}) async {
+    await client.dio.post<void>('/api/admin/payments/$paymentId/reconcile',
+        data: note == null ? null : {'note': note});
+  }
+
+  Future<int> reconcileDriverPayments(int driverId, {String? note}) async {
+    final response = await client.dio.post<Map<String, dynamic>>(
+        '/api/admin/drivers/$driverId/reconcile-all',
+        data: note == null ? null : {'note': note});
+    return response.data?['reconciledCount'] as int? ?? 0;
   }
 
   Future<List<DriverOrder>> driverOrders({int page = 0, int size = 30}) async {
@@ -142,16 +175,25 @@ class OrdersApi implements CartGateway {
       DriverOrder.fromJson((await client.dio
               .put<Map<String, dynamic>>('/api/driver/orders/$id/accept'))
           .data!);
+
   Future<DriverOrder> pickupDelivery(int id) async =>
       DriverOrder.fromJson((await client.dio
               .put<Map<String, dynamic>>('/api/driver/orders/$id/pickup'))
           .data!);
+
+  Future<DriverOrder> reportDeliveryFailure(int id, String reason) async =>
+      DriverOrder.fromJson((await client.dio.put<Map<String, dynamic>>(
+              '/api/driver/orders/$id/fail',
+              data: {'reason': reason}))
+          .data!);
+
   Future<OrderRecord> deliver(int id, String otp,
           {required bool cashCollected}) async =>
       OrderRecord.fromJson((await client.dio.put<Map<String, dynamic>>(
               '/api/driver/orders/$id/deliver',
               data: {'otp': otp, 'cashCollected': cashCollected}))
           .data!);
+
   Future<void> updateDriverLocation(double latitude, double longitude) async {
     await client.dio.post<void>('/api/driver/location',
         data: {'latitude': latitude, 'longitude': longitude});

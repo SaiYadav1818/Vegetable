@@ -121,37 +121,130 @@ class _DriverLandingPageState extends State<DriverLandingPage>
 
   Future<void> _deliver(DriverOrder order) async {
     final controller = TextEditingController();
-    final otp = await showDialog<String>(
+    bool cashCollected = true;
+    final result = await showDialog<Map<String, dynamic>>(
         context: context,
-        builder: (ctx) => AlertDialog(
-              title: const Text('Verify delivery'),
-              content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                        'Collect ₹${order.totalAmount.toStringAsFixed(2)} in cash, then enter the customer OTP.'),
-                    const SizedBox(height: 12),
-                    TextField(
-                        controller: controller,
-                        keyboardType: TextInputType.number,
-                        maxLength: 6,
-                        decoration: const InputDecoration(
-                            labelText: '6 digit delivery OTP'))
-                  ]),
-              actions: [
-                TextButton(
-                    onPressed: () => Navigator.pop(ctx),
-                    child: const Text('Back')),
-                FilledButton(
-                    onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-                    child: const Text('Complete delivery'))
-              ],
+        builder: (ctx) => StatefulBuilder(
+              builder: (ctx, setDialogState) => AlertDialog(
+                title: const Text('Verify delivery'),
+                content: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                          'Order total: ₹${order.totalAmount.toStringAsFixed(2)}'),
+                      const SizedBox(height: 12),
+                      SwitchListTile(
+                        contentPadding: EdgeInsets.zero,
+                        title: const Text('Cash collected'),
+                        subtitle: Text(cashCollected
+                            ? 'Driver collected ₹${order.totalAmount.toStringAsFixed(2)}'
+                            : 'Cash was NOT collected'),
+                        value: cashCollected,
+                        activeColor: AppColors.green,
+                        onChanged: (val) =>
+                            setDialogState(() => cashCollected = val),
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                          controller: controller,
+                          keyboardType: TextInputType.number,
+                          maxLength: 6,
+                          decoration: const InputDecoration(
+                              labelText: '6 digit delivery OTP')),
+                    ]),
+                actions: [
+                  TextButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      child: const Text('Back')),
+                  FilledButton(
+                      onPressed: () => Navigator.pop(ctx, {
+                            'otp': controller.text.trim(),
+                            'cashCollected': cashCollected,
+                          }),
+                      child: const Text('Complete delivery'))
+                ],
+              ),
             ));
     controller.dispose();
-    if (otp == null) return;
+    if (result == null) return;
+    final otp = result['otp'] as String;
+    final collected = result['cashCollected'] as bool;
+    if (otp.isEmpty) return;
     if (await _act(
-        () => _api.deliver(order.orderId, otp, cashCollected: true))) {
+        () => _api.deliver(order.orderId, otp, cashCollected: collected))) {
+      _stopLocation();
+    }
+  }
+
+  Future<void> _reportFailure(DriverOrder order) async {
+    final controller = TextEditingController();
+    String selectedReason = 'Customer unavailable / not at address';
+    final confirmed = await showDialog<String>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Report delivery failed'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Why could this order not be delivered?'),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                value: selectedReason,
+                isExpanded: true,
+                items: const [
+                  DropdownMenuItem(
+                      value: 'Customer unavailable / not at address',
+                      child: Text('Customer unavailable')),
+                  DropdownMenuItem(
+                      value: 'Phone switched off / unreachable',
+                      child: Text('Phone unreachable')),
+                  DropdownMenuItem(
+                      value: 'Customer refused delivery',
+                      child: Text('Customer refused')),
+                  DropdownMenuItem(
+                      value: 'Incorrect delivery address',
+                      child: Text('Incorrect address')),
+                  DropdownMenuItem(
+                      value: 'Other reason', child: Text('Other reason')),
+                ],
+                onChanged: (val) =>
+                    setDialogState(() => selectedReason = val ?? selectedReason),
+              ),
+              if (selectedReason == 'Other reason') ...[
+                const SizedBox(height: 8),
+                TextField(
+                  controller: controller,
+                  decoration:
+                      const InputDecoration(labelText: 'Specify reason'),
+                ),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancel')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+              onPressed: () {
+                final reason = selectedReason == 'Other reason' &&
+                        controller.text.trim().isNotEmpty
+                    ? controller.text.trim()
+                    : selectedReason;
+                Navigator.pop(ctx, reason);
+              },
+              child: const Text('Confirm failure'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    if (confirmed == null || confirmed.isEmpty) return;
+    if (await _act(() => _api.reportDeliveryFailure(order.orderId, confirmed))) {
       _stopLocation();
     }
   }
@@ -331,6 +424,12 @@ class _DriverLandingPageState extends State<DriverLandingPage>
         FilledButton(
             onPressed: _busy ? null : () => _deliver(order),
             child: const Text('Complete with OTP')),
+      if (status == 'ACCEPTED' || status == 'PICKED_UP')
+        OutlinedButton.icon(
+            onPressed: _busy ? null : () => _reportFailure(order),
+            icon: const Icon(Icons.warning_amber_rounded, color: AppColors.error),
+            label: const Text('Report failure',
+                style: TextStyle(color: AppColors.error))),
     ];
     return DeliveryOrderCard(
         title: order.orderNumber,

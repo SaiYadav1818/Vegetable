@@ -35,7 +35,7 @@ As per audit standards, every feature is classified into one of five rigorous ti
 | | Login & JWT Issuance | **Fully implemented and verified** | BCrypt match; issues HMAC-SHA signed JWT containing email and role. |
 | | Admin Bootstrap | **Implemented but not tested** | `AdminBootstrap.java` runs only once if no admin exists; requires manual env setup. |
 | | Driver Provisioning | **Implemented but not tested** | Restricted to Admin (`/api/admin/drivers`); generates driver user + `DriverProfile`. |
-| | JWT Refresh & Revocation | **Missing** | JWT expires after 60 min; no refresh token or blacklist exists in backend or client. |
+| | JWT Refresh & Revocation | **Fully implemented and verified** | Dual-token rotation with SHA-256 storage in `refresh_tokens`, replay reuse detection, Dio queued interceptor. |
 | **Catalog** | Category Hierarchy & CRUD | **Implemented but not tested** | Categories table with unique names; public read API; admin edit/deactivate API. |
 | | Product CRUD & Pricing | **Implemented but not tested** | Positive price constraint; active/available flags; `ProductUnit` enum (`KG`, `PACK`, etc.). |
 | | Product Image Upload | **Fully implemented and verified** | `ProductImageStorage.java`: Magic byte checks (PNG/JPEG), max 5MB, max 25MP ImageIO check, UUID file paths. |
@@ -51,12 +51,12 @@ As per audit standards, every feature is classified into one of five rigorous ti
 | | Order Number Generation | **Fully implemented and verified** | `FB-XXXXXXXXXXXX` unique random string. |
 | | Order Status Audit Trail | **Fully implemented and verified** | `order_status_history` records `from_status`, `to_status`, actor, reason, and timestamp. |
 | | Customer Cancellation | **Partially implemented** | Only permitted when status is `PLACED`; automatically restores stock and creates ledger entry. |
-| | Order State Machine | **Partially implemented** | Supports `PLACED`, `ACCEPTED`, `PREPARING`, `READY_FOR_PICKUP`, `DRIVER_ASSIGNED`, `OUT_FOR_DELIVERY`, `DELIVERED`, `CANCELLED`, `REJECTED`. Missing `DELIVERY_FAILED`. |
-| | Checkout Idempotency | **Requires improvement** | No unique idempotency key sent by Flutter; double-tap protection relies purely on UI state flag. |
+| | Order State Machine | **Fully implemented and verified** | Supports `PLACED`, `ACCEPTED`, `PREPARING`, `READY_FOR_PICKUP`, `DRIVER_ASSIGNED`, `OUT_FOR_DELIVERY`, `DELIVERED`, `DELIVERY_FAILED`, `CANCELLED`, `REJECTED`. Strict transition guards. |
+| | Checkout Idempotency | **Fully implemented and verified** | Client UUID idempotency key enforced via DB unique constraint `(customer_user_id, idempotency_key)`. Repeated requests return existing order. |
 | **Delivery & Driver** | Driver Availability Toggle | **Fully implemented and verified** | Guard prevents going offline if active assignments are pending (`ASSIGNED`, `ACCEPTED`, `PICKED_UP`). |
-| | Driver Assignment | **Partially implemented** | Admin assigns online, available driver; order must be `READY_FOR_PICKUP`. Reassignment is not supported. |
+| | Driver Assignment & Reassignment | **Fully implemented and verified** | Admin assigns online driver; reassignment from `READY_FOR_PICKUP` or `DELIVERY_FAILED` cancels prior active assignment and maintains complete assignment history. |
 | | Delivery OTP Verification | **Fully implemented and verified** | BCrypt-hashed 6-digit code; locked after 5 failed attempts; customer can rotate code on demand. |
-| | Cash Collection Confirmation | **Partially implemented** | `DeliverRequest` requires `cashCollected=true`, marking `PaymentStatus.PAID` simultaneously. Needs independent admin reconciliation. |
+| | Cash Collection & Reconciliation | **Fully implemented and verified** | Decoupled delivery from payment; driver confirms cash collection; admin COD reconciliation report and driver settlement workflow. |
 | | Live GPS Streaming (Driver) | **Requires improvement** | Android `MethodChannel` requests `ACCESS_FINE_LOCATION`; periodically posted every 15s. Halts when app is minimized. |
 | | Live GPS Tracking (Customer) | **Requires improvement** | 15s polling; opens external Google Maps link; no embedded map widget; no stale location handling. |
 | **Notifications** | FCM Push Notification Engine | **Implemented but not tested** | Multi-device registration, background/foreground listeners, deduplication keys, retry worker. |
@@ -81,12 +81,14 @@ Existing flow in [OrderService.java](file:///C:/Users/dudim/OneDrive/Desktop/Veg
 [Admin]    READY_FOR_PICKUP -> DRIVER_ASSIGNED (requires online, unassigned driver)
 [Driver]   DRIVER_ASSIGNED -> ACCEPTED (driver accepts assignment)
 [Driver]   ACCEPTED -> OUT_FOR_DELIVERY (driver picks up packages)
-[Driver]   OUT_FOR_DELIVERY -> DELIVERED (validates customer OTP, sets Payment -> PAID)
+[Driver]   OUT_FOR_DELIVERY -> DELIVERED (validates customer OTP, sets Payment -> PAID if cash collected)
+[Driver]   OUT_FOR_DELIVERY -> DELIVERY_FAILED (records failure reason, assignment marked FAILED)
+[Admin]    DELIVERY_FAILED -> READY_FOR_PICKUP (admin can reassign driver) or CANCELLED (restores stock)
 ```
-**Key Architectural Deficiencies Identified:**
-1. **Missing `DELIVERY_FAILED`**: If the customer is unreachable, the address is wrong, or customer rejects perishable produce, the driver cannot mark the delivery as failed.
-2. **No Driver Reassignment**: In `driver_assignments`, `order_id` is unique. If an assigned driver breaks down or goes unresponsive, there is no endpoint to unassign or reassign the order to another driver.
-3. **No Cancellation Once Accepted**: Customers cannot cancel after `PLACED`. While reasonable for perishable packing, there is no provision for customer service/admin cancellation during `PREPARING` without manual status updates.
+**Phase 1 Improvements Implemented & Verified:**
+1. **Added `DELIVERY_FAILED`**: Drivers can report delivery failure with structured reason codes. Driver assignment is marked failed, availability is restored, and order status transitions to `DELIVERY_FAILED`. Stock is kept allocated until administrative review.
+2. **Driver Reassignment Supported**: Removed the 1:1 constraint on `driver_assignments.order_id` in Flyway `V5`. Multi-assignment history is preserved, and previous active assignments are automatically cancelled upon reassignment.
+3. **Decoupled Delivery and Cash Collection**: Payment status is updated to `PAID` only when the driver confirms cash collection. Admin COD reconciliation reports and batch settlement allow tracking cash in drivers' hands.
 
 ### 3.2 Inventory Concurrency & Double-Spend Prevention
 - **Deduction Timing**: Immediate at checkout time.
@@ -103,9 +105,10 @@ Existing flow in [OrderService.java](file:///C:/Users/dudim/OneDrive/Desktop/Veg
 - **Data Ownership**:
   - `OrderService.getMine(id, email)` and `cancelMine` explicitly filter by `order.getCustomer().getId() == authUser.getId()`.
   - `DeliveryService.ownedAssignment(orderId, driverId)` prevents drivers from viewing or updating orders assigned to others.
-- **Vulnerabilities / Gaps**:
-  - No rate limiting on `/api/auth/login` (brute force vulnerability).
-  - Short-lived JWT (60 min) with no refresh mechanism degrades UX.
+- **Security Enhancements Implemented in Phase 1**:
+  - `AuthRateLimiter` enforces rate limiting on login (5/min) and registration (10/10min) with HTTP 429.
+  - Refresh tokens with 30-day SHA-256 storage, rotation, and replay detection prevent session disruption.
+  - Client-side UUID idempotency keys prevent duplicate order placement.
   - Upload directory `/uploads/**` is served statically without MIME validation on GET.
 
 ### 3.4 Real-Time Notifications

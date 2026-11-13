@@ -17,4 +17,7 @@ public class AdminOrdersController {
     @PostMapping("/orders/{id}/assign-driver") public OrderDtos.OrderResponse assign(@PathVariable long id,@Valid @RequestBody OrderDtos.AssignDriverRequest request,Authentication auth){return delivery.assign(id,request.driverUserId(),auth.getName());}
     @PostMapping("/drivers") public OrderDtos.DriverResponse createDriver(@Valid @RequestBody OrderDtos.DriverCreateRequest request,Authentication auth){return delivery.createDriver(auth.getName(),request);}
     @GetMapping("/drivers") public Page<OrderDtos.DriverResponse> drivers(@PageableDefault(size=50,sort="user.fullName") Pageable pageable){return delivery.drivers(pageable);}
+    @GetMapping("/reports/cod-reconciliation") public OrderDtos.CodReconciliationReport codReport(Authentication auth){return delivery.codReconciliationReport(auth.getName());}
+    @PostMapping("/payments/{id}/reconcile") public OrderDtos.PaymentReconciliationItem reconcilePayment(@PathVariable long id,@RequestBody(required=false) OrderDtos.ReconcilePaymentRequest request,Authentication auth){return delivery.reconcilePayment(id,request,auth.getName());}
+    @PostMapping("/drivers/{driverId}/reconcile-all") public java.util.Map<String,Integer> reconcileDriver(@PathVariable long driverId,@RequestBody(required=false) OrderDtos.ReconcilePaymentRequest request,Authentication auth){int count=delivery.reconcileDriverPayments(driverId,request,auth.getName());return java.util.Map.of("reconciledCount",count);}
 }

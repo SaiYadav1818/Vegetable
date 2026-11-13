@@ -378,6 +378,11 @@ class OrderStatusBadge extends StatelessWidget {
           AppColors.paleGreen
         ),
       'DELIVERED' => ('Delivered', AppColors.darkGreen, AppColors.paleGreen),
+      'DELIVERY_FAILED' => (
+          'Delivery failed',
+          AppColors.error,
+          const Color(0xFFFFEBEE)
+        ),
       'REJECTED' || 'CANCELLED' => (
           status == 'REJECTED' ? 'Rejected' : 'Cancelled',
           AppColors.red,

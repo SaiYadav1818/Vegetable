@@ -29,7 +29,7 @@ public class SecurityConfig {
     @Bean PasswordEncoder passwordEncoder(){return new BCryptPasswordEncoder();}
     @Bean SecurityFilterChain securityFilterChain(HttpSecurity http, JwtAuthFilter jwt) throws Exception {
         return http.csrf(c->c.disable()).cors(Customizer.withDefaults()).sessionManagement(s->s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
-                .authorizeHttpRequests(a->a.requestMatchers("/api/auth/register","/api/auth/login","/api/products/**","/api/categories","/uploads/**","/swagger-ui/**","/v3/api-docs/**").permitAll()
+                .authorizeHttpRequests(a->a.requestMatchers("/api/auth/**","/api/products/**","/api/categories","/uploads/**","/swagger-ui/**","/v3/api-docs/**").permitAll()
                         .requestMatchers("/api/admin/**").hasRole("ADMIN").requestMatchers("/api/driver/**").hasRole("DRIVER").anyRequest().authenticated())
                 .addFilterBefore(jwt, UsernamePasswordAuthenticationFilter.class).build();
     }

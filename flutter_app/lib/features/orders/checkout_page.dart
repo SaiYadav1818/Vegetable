@@ -25,10 +25,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
   DateTime _date = DateTime.now();
   String _slot = 'MORNING';
   bool _placing = false;
+  String? _checkoutIdempotencyKey;
 
   @override
   void initState() {
     super.initState();
+    _checkoutIdempotencyKey = 'chk_${DateTime.now().millisecondsSinceEpoch}_${(1000 + (DateTime.now().microsecond % 9000))}';
     _cart.load().then((_) {
       if (mounted) setState(() {});
     }).catchError((_) {
@@ -57,10 +59,11 @@ class _CheckoutPageState extends State<CheckoutPage> {
   String? _required(String? value) =>
       value == null || value.trim().isEmpty ? 'Required' : null;
   Future<void> _place() async {
-    if (!_form.currentState!.validate() || _cart.lines.isEmpty) return;
+    if (_placing || !_form.currentState!.validate() || _cart.lines.isEmpty) return;
     setState(() => _placing = true);
     try {
       final order = await _api.placeOrder(
+        idempotencyKey: _checkoutIdempotencyKey,
         cart: _cart.snapshot,
         recipientName: _name.text.trim(),
         recipientPhone: _phone.text.trim(),

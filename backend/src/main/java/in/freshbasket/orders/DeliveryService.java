@@ -1,10 +1,10 @@
 package in.freshbasket.orders;
 
-import in.freshbasket.user.*;
 import in.freshbasket.notifications.BusinessNotificationPublisher;
+import in.freshbasket.user.*;
 import java.math.BigDecimal;
 import java.time.Instant;
-import java.util.List;
+import java.util.*;
 import org.springframework.data.domain.*;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -16,10 +16,14 @@ import org.springframework.web.server.ResponseStatusException;
 public class DeliveryService {
     private final UserRepository users; private final DriverProfileRepository drivers; private final DriverAssignmentRepository assignments;
     private final DriverLocationRepository locations; private final DeliveryOtpRepository otps; private final OrderItemRepository orderItems;
-    private final PaymentRepository payments; private final PasswordEncoder encoder; private final OrderService orders; private final BusinessNotificationPublisher notificationPublisher;
+    private final PaymentRepository payments; private final PasswordEncoder encoder; private final OrderService orders;
+    private final BusinessNotificationPublisher notificationPublisher;
+
     public DeliveryService(UserRepository users,DriverProfileRepository drivers,DriverAssignmentRepository assignments,DriverLocationRepository locations,
-            DeliveryOtpRepository otps,OrderItemRepository orderItems,PaymentRepository payments,PasswordEncoder encoder,OrderService orders,BusinessNotificationPublisher notificationPublisher){
-        this.users=users;this.drivers=drivers;this.assignments=assignments;this.locations=locations;this.otps=otps;this.orderItems=orderItems;this.payments=payments;this.encoder=encoder;this.orders=orders;this.notificationPublisher=notificationPublisher;
+            DeliveryOtpRepository otps,OrderItemRepository orderItems,PaymentRepository payments,PasswordEncoder encoder,OrderService orders,
+            BusinessNotificationPublisher notificationPublisher){
+        this.users=users;this.drivers=drivers;this.assignments=assignments;this.locations=locations;this.otps=otps;this.orderItems=orderItems;this.payments=payments;this.encoder=encoder;this.orders=orders;
+        this.notificationPublisher=notificationPublisher;
     }
 
     @Transactional public OrderDtos.DriverResponse createDriver(String email,OrderDtos.DriverCreateRequest request){
@@ -36,8 +40,20 @@ public class DeliveryService {
     }
     @Transactional public OrderDtos.OrderResponse assign(long orderId,long driverId,String email){
         AppUser admin=orders.requireAdmin(email);CustomerOrder order=orders.lockOrder(orderId);
-        if(order.getStatus()!=OrderStatus.READY_FOR_PICKUP)throw conflict("Order must be ready for pickup before driver assignment");
-        if(assignments.findByOrder_Id(orderId).isPresent())throw conflict("Order already has a driver assignment");
+        if(order.getStatus()!=OrderStatus.READY_FOR_PICKUP && order.getStatus()!=OrderStatus.DELIVERY_FAILED){
+            throw conflict("Order must be ready for pickup or in failed delivery state before driver assignment");
+        }
+        Optional<DriverAssignment> activeAssignment = assignments.findFirstByOrder_IdAndStatusIn(orderId,
+                List.of(AssignmentStatus.ASSIGNED, AssignmentStatus.ACCEPTED, AssignmentStatus.PICKED_UP));
+        if (activeAssignment.isPresent()) {
+            DriverAssignment old = activeAssignment.get();
+            if (old.getDriver().getUser().getId().equals(driverId)) {
+                throw conflict("Order is already actively assigned to this driver");
+            }
+            old.cancel("Reassigned by admin to another driver");
+            DriverProfile oldProfile = old.getDriver();
+            oldProfile.setAvailable(oldProfile.isOnline());
+        }
         DriverProfile profile=drivers.findLocked(driverId).orElseThrow(()->notFound("Driver not found"));
         if(!profile.getUser().isActive()||!profile.isOnline()||!profile.isAvailable())throw conflict("Driver is offline or already assigned");
         assignments.save(new DriverAssignment(order,profile,admin));profile.setAvailable(false);
@@ -58,6 +74,20 @@ public class DeliveryService {
         a.pickup();CustomerOrder order=orders.lockOrder(orderId);orders.changeStatus(order,OrderStatus.OUT_FOR_DELIVERY,user,"Driver picked up the order");
         return driverOrderDto(a);
     }
+    @Transactional public OrderDtos.DriverOrderResponse fail(long orderId,String email,OrderDtos.DeliveryFailRequest request){
+        AppUser user=driver(email);DriverAssignment a=ownedAssignment(orderId,user.getId());
+        if(a.getStatus()!=AssignmentStatus.ACCEPTED && a.getStatus()!=AssignmentStatus.PICKED_UP){
+            throw conflict("Delivery can only be reported failed after acceptance or pickup");
+        }
+        CustomerOrder order=orders.lockOrder(orderId);
+        String reason=request.reason().trim();
+        a.fail(reason);
+        DriverProfile profile=a.getDriver();
+        profile.setAvailable(profile.isOnline());
+        locations.findById(user.getId()).ifPresent(DriverLocation::stop);
+        orders.changeStatus(order,OrderStatus.DELIVERY_FAILED,user,reason);
+        return driverOrderDto(a);
+    }
     @Transactional(noRollbackFor=InvalidDeliveryOtpException.class) public OrderDtos.OrderResponse deliver(long orderId,String email,OrderDtos.DeliverRequest request){
         AppUser user=driver(email);DriverAssignment a=ownedAssignment(orderId,user.getId());
         if(a.getStatus()!=AssignmentStatus.PICKED_UP)throw conflict("Order must be picked up before delivery");
@@ -67,8 +97,15 @@ public class DeliveryService {
         if(!otp.matches(request.otp(),encoder)){otp.failed();throw new InvalidDeliveryOtpException();}
         otp.verify();a.deliver();DriverProfile profile=a.getDriver();profile.setAvailable(profile.isOnline());
         locations.findById(user.getId()).ifPresent(DriverLocation::stop);
-        orders.changeStatus(order,OrderStatus.DELIVERED,user,"Delivery verified by customer OTP");order.paymentStatus(PaymentStatus.PAID);
-        payments.findByOrder_Id(orderId).ifPresent(Payment::markPaid);
+        orders.changeStatus(order,OrderStatus.DELIVERED,user,"Delivery verified by customer OTP");
+        Payment payment=payments.findByOrder_Id(orderId).orElse(null);
+        if(request.cashCollected()){
+            order.paymentStatus(PaymentStatus.PAID);
+            if(payment!=null) payment.markCollected(user,Instant.now());
+        }else{
+            order.paymentStatus(PaymentStatus.PENDING);
+            if(payment!=null) payment.markUnpaid();
+        }
         return orders.response(order,null);
     }
     @Transactional public void location(String email,OrderDtos.DriverLocationRequest request){
@@ -79,15 +116,94 @@ public class DeliveryService {
         if(location==null)locations.save(new DriverLocation(profile,assignment,request.latitude(),request.longitude()));
         else location.update(assignment,request.latitude(),request.longitude());
     }
+
+    // COD Payment Reconciliation
+    @Transactional(readOnly=true) public OrderDtos.CodReconciliationReport codReconciliationReport(String email){
+        orders.requireAdmin(email);
+        List<Payment> allPayments = payments.findAll();
+        BigDecimal totalCollected = BigDecimal.ZERO;
+        BigDecimal totalSettled = BigDecimal.ZERO;
+        BigDecimal totalUnsettled = BigDecimal.ZERO;
+        long unpaidDelivered = payments.countUnpaidDelivered();
+
+        Map<Long, DriverAccumulator> driverMap = new HashMap<>();
+        List<OrderDtos.PaymentReconciliationItem> unsettledItems = new ArrayList<>();
+
+        for(Payment p : allPayments){
+            if(p.getStatus() == PaymentStatus.PAID){
+                totalCollected = totalCollected.add(p.getAmount());
+                if(p.isReconciled()){
+                    totalSettled = totalSettled.add(p.getAmount());
+                } else {
+                    totalUnsettled = totalUnsettled.add(p.getAmount());
+                    unsettledItems.add(paymentReconciliationItem(p));
+                }
+                if(p.getCollectedBy() != null){
+                    AppUser d = p.getCollectedBy();
+                    DriverAccumulator acc = driverMap.computeIfAbsent(d.getId(), id -> new DriverAccumulator(d.getId(), d.getFullName(), d.getPhoneNumber()));
+                    if(p.isReconciled()){
+                        acc.settledCount++;
+                        acc.settledAmount = acc.settledAmount.add(p.getAmount());
+                    } else {
+                        acc.unsettledCount++;
+                        acc.unsettledAmount = acc.unsettledAmount.add(p.getAmount());
+                    }
+                }
+            }
+        }
+        List<OrderDtos.DriverReconciliationSummary> driverSummaries = driverMap.values().stream()
+                .map(a -> new OrderDtos.DriverReconciliationSummary(a.id, a.name, a.phone, a.unsettledCount, a.unsettledAmount, a.settledCount, a.settledAmount))
+                .toList();
+
+        return new OrderDtos.CodReconciliationReport(totalCollected, totalSettled, totalUnsettled, unpaidDelivered, driverSummaries, unsettledItems);
+    }
+
+    @Transactional public OrderDtos.PaymentReconciliationItem reconcilePayment(long paymentId,OrderDtos.ReconcilePaymentRequest request,String email){
+        AppUser admin=orders.requireAdmin(email);
+        Payment payment=payments.findById(paymentId).orElseThrow(()->notFound("Payment record not found"));
+        if(payment.getStatus()!=PaymentStatus.PAID)throw conflict("Payment must be marked collected (PAID) before reconciliation");
+        payment.reconcile(admin, clean(request==null?null:request.note()));
+        return paymentReconciliationItem(payment);
+    }
+
+    @Transactional public int reconcileDriverPayments(long driverId,OrderDtos.ReconcilePaymentRequest request,String email){
+        AppUser admin=orders.requireAdmin(email);
+        List<Payment> list=payments.findByCollectedBy_IdAndReconciledFalse(driverId);
+        String note=clean(request==null?null:request.note());
+        int count=0;
+        for(Payment p:list){
+            if(p.getStatus()==PaymentStatus.PAID){
+                p.reconcile(admin, note);
+                count++;
+            }
+        }
+        return count;
+    }
+
     private DriverAssignment ownedAssignment(long orderId,long driverId){
-        DriverAssignment a=assignments.findLockedByOrderId(orderId).orElseThrow(()->notFound("Delivery assignment not found"));
-        if(!a.getDriver().getUser().getId().equals(driverId))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"This delivery is assigned to another driver");return a;
+        DriverAssignment a=assignments.findLockedByOrderIdAndStatusIn(orderId,List.of(AssignmentStatus.ASSIGNED,AssignmentStatus.ACCEPTED,AssignmentStatus.PICKED_UP))
+                .orElseThrow(()->notFound("Active delivery assignment not found"));
+        if(!a.getDriver().getUser().getId().equals(driverId))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"This delivery is assigned to another driver");
+        return a;
     }
     private OrderDtos.DriverOrderResponse driverOrderDto(DriverAssignment a){CustomerOrder o=a.getOrder();var lines=orderItems.findByOrder_IdOrderById(o.getId()).stream().map(i->new OrderDtos.OrderItemResponse(i.getProductName(),i.getUnit().name(),i.getQuantity(),i.getUnitPrice(),i.getLineTotal())).toList();
         return new OrderDtos.DriverOrderResponse(a.getId(),o.getId(),o.getOrderNumber(),a.getStatus(),o.getStatus(),o.getCustomer().getFullName(),o.getRecipientPhone(),o.getAddressLine(),o.getHouseNumber(),o.getArea(),o.getLandmark(),o.getPincode(),o.getDeliveryInstructions(),o.getTotalAmount(),o.getDeliveryDate(),o.getDeliverySlot(),lines);
     }
+    private OrderDtos.PaymentReconciliationItem paymentReconciliationItem(Payment p){
+        AppUser d = p.getCollectedBy();
+        return new OrderDtos.PaymentReconciliationItem(p.getId(), p.getOrder().getId(), p.getOrder().getOrderNumber(), p.getAmount(), p.getStatus(),
+                d == null ? null : d.getId(), d == null ? null : d.getFullName(), d == null ? null : d.getPhoneNumber(),
+                p.getCollectedAt(), p.isReconciled(), p.getReconciledAt(), p.getReconciliationNote());
+    }
     private OrderDtos.DriverResponse driverDto(DriverProfile d){return new OrderDtos.DriverResponse(d.getUser().getId(),d.getUser().getFullName(),d.getUser().getEmail(),d.getUser().getPhoneNumber(),d.isOnline(),d.isAvailable());}
     private AppUser driver(String email){return users.findByEmail(email).filter(u->u.getRole()==Role.DRIVER&&u.isActive()).orElseThrow(()->new ResponseStatusException(HttpStatus.FORBIDDEN,"Driver account required"));}
     private ResponseStatusException notFound(String s){return new ResponseStatusException(HttpStatus.NOT_FOUND,s);}private ResponseStatusException conflict(String s){return new ResponseStatusException(HttpStatus.CONFLICT,s);}
+    private String clean(String s){return s==null||s.isBlank()?null:s.trim();}
     static class InvalidDeliveryOtpException extends ResponseStatusException {InvalidDeliveryOtpException(){super(HttpStatus.UNAUTHORIZED,"Incorrect delivery code");}}
+    private static class DriverAccumulator {
+        final Long id; final String name; final String phone;
+        long unsettledCount = 0; BigDecimal unsettledAmount = BigDecimal.ZERO;
+        long settledCount = 0; BigDecimal settledAmount = BigDecimal.ZERO;
+        DriverAccumulator(Long id, String name, String phone){this.id=id;this.name=name;this.phone=phone;}
+    }
 }

@@ -19,11 +19,11 @@ public class BusinessNotificationPublisher {
         publish("ORDER_PLACED","ORDER_PLACED:"+order.getId(),order,"New order received","Order "+order.getOrderNumber()+" was placed.",adminIds());
     }
     public void orderStatus(CustomerOrder order,OrderStatus status){
-        String type=switch(status){case ACCEPTED->"ORDER_ACCEPTED";case REJECTED->"ORDER_REJECTED";case PREPARING->"ORDER_PREPARING";case READY_FOR_PICKUP->"ORDER_READY";case DRIVER_ASSIGNED->"DRIVER_ASSIGNED";case OUT_FOR_DELIVERY->"OUT_FOR_DELIVERY";case DELIVERED->"ORDER_DELIVERED";case CANCELLED->"ORDER_CANCELLED";default->null;};
+        String type=switch(status){case ACCEPTED->"ORDER_ACCEPTED";case REJECTED->"ORDER_REJECTED";case PREPARING->"ORDER_PREPARING";case READY_FOR_PICKUP->"ORDER_READY";case DRIVER_ASSIGNED->"DRIVER_ASSIGNED";case OUT_FOR_DELIVERY->"OUT_FOR_DELIVERY";case DELIVERED->"ORDER_DELIVERED";case CANCELLED->"ORDER_CANCELLED";case DELIVERY_FAILED->"DELIVERY_FAILED";default->null;};
         if(type==null)return;
         Set<Long> recipients=new HashSet<>();recipients.add(order.getCustomer().getId());
-        if(status==OrderStatus.DELIVERED||status==OrderStatus.CANCELLED)recipients.addAll(adminIds());
-        String label=switch(status){case ACCEPTED->"was accepted";case REJECTED->"was rejected";case PREPARING->"is being prepared";case READY_FOR_PICKUP->"is ready for pickup";case DRIVER_ASSIGNED->"has a driver assigned";case OUT_FOR_DELIVERY->"is out for delivery";case DELIVERED->"was delivered";case CANCELLED->"was cancelled";default->"was updated";};
+        if(status==OrderStatus.DELIVERED||status==OrderStatus.CANCELLED||status==OrderStatus.DELIVERY_FAILED)recipients.addAll(adminIds());
+        String label=switch(status){case ACCEPTED->"was accepted";case REJECTED->"was rejected";case PREPARING->"is being prepared";case READY_FOR_PICKUP->"is ready for pickup";case DRIVER_ASSIGNED->"has a driver assigned";case OUT_FOR_DELIVERY->"is out for delivery";case DELIVERED->"was delivered";case CANCELLED->"was cancelled";case DELIVERY_FAILED->"delivery attempt failed";default->"was updated";};
         publish(type,type+":"+order.getId()+":"+status.name(),order,"Order update","Order "+order.getOrderNumber()+" "+label+".",recipients);
     }
     public void driverAssigned(CustomerOrder order,AppUser driver){

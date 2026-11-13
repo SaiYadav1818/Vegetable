@@ -23,13 +23,15 @@ public class OrderService {
     private final OrderRepository orders; private final OrderItemRepository orderItems; private final OrderHistoryRepository history;
     private final PaymentRepository payments; private final DeliveryOtpRepository otps; private final DriverAssignmentRepository assignments;
     private final DriverLocationRepository locations; private final ProductRepository products; private final InventoryRepository inventory;
-    private final InventoryTransactionRepository inventoryTransactions; private final PasswordEncoder passwordEncoder;
+    private final InventoryTransactionRepository inventoryTransactions;
     private final BusinessNotificationPublisher notificationPublisher;
+    private final PasswordEncoder passwordEncoder;
     private final BigDecimal minimumOrder; private final BigDecimal deliveryCharge;
     public OrderService(UserRepository users,CartRepository carts,CartItemRepository cartItems,OrderRepository orders,OrderItemRepository orderItems,
             OrderHistoryRepository history,PaymentRepository payments,DeliveryOtpRepository otps,DriverAssignmentRepository assignments,
             DriverLocationRepository locations,ProductRepository products,InventoryRepository inventory,InventoryTransactionRepository inventoryTransactions,
-            PasswordEncoder passwordEncoder,BusinessNotificationPublisher notificationPublisher,@Value("${app.order.minimum-value:0.00}") BigDecimal minimumOrder,
+            BusinessNotificationPublisher notificationPublisher,
+            PasswordEncoder passwordEncoder,@Value("${app.order.minimum-value:0.00}") BigDecimal minimumOrder,
             @Value("${app.order.delivery-charge:0.00}") BigDecimal deliveryCharge){
         this.users=users;this.carts=carts;this.cartItems=cartItems;this.orders=orders;this.orderItems=orderItems;this.history=history;this.payments=payments;
         this.otps=otps;this.assignments=assignments;this.locations=locations;this.products=products;this.inventory=inventory;this.inventoryTransactions=inventoryTransactions;
@@ -38,7 +40,15 @@ public class OrderService {
     }
 
     @Transactional public OrderDtos.OrderResponse place(String email,OrderDtos.CheckoutRequest request){
-        AppUser customer=customer(email);Cart cart=carts.findByCustomer_Id(customer.getId()).orElseThrow(()->badRequest("Your cart is empty"));
+        AppUser customer=customer(email);
+        String idempotencyKey=clean(request.idempotencyKey());
+        if(idempotencyKey!=null){
+            Optional<CustomerOrder> existing=orders.findByCustomer_IdAndIdempotencyKey(customer.getId(),idempotencyKey);
+            if(existing.isPresent()){
+                return response(existing.get(),null);
+            }
+        }
+        Cart cart=carts.findByCustomer_Id(customer.getId()).orElseThrow(()->badRequest("Your cart is empty"));
         List<CartItem> lines=cartItems.findByCart_IdOrderByProduct_Id(cart.getId());if(lines.isEmpty())throw badRequest("Your cart is empty");
         List<LockedLine> checked=new ArrayList<>();BigDecimal subtotal=BigDecimal.ZERO;
         for(CartItem line:lines){
@@ -55,6 +65,7 @@ public class OrderService {
         CustomerOrder order=new CustomerOrder("FB-"+UUID.randomUUID().toString().replace("-","").substring(0,12).toUpperCase(Locale.ROOT),customer,
                 subtotal,deliveryCharge,total,request.recipientName().trim(),request.recipientPhone().trim(),request.addressLine().trim(),clean(request.houseNumber()),
                 request.area().trim(),clean(request.landmark()),request.pincode(),clean(request.deliveryInstructions()),request.deliveryDate(),request.deliverySlot(),request.latitude(),request.longitude());
+        order.setIdempotencyKey(idempotencyKey);
         order=orders.save(order);
         for(LockedLine line:checked){
             BigDecimal previous=line.stock().getQuantity();line.stock().adjust(line.item().getQuantity().negate());
@@ -92,6 +103,7 @@ public class OrderService {
             case PLACED -> next==OrderStatus.ACCEPTED||next==OrderStatus.REJECTED||next==OrderStatus.CANCELLED;
             case ACCEPTED -> next==OrderStatus.PREPARING||next==OrderStatus.CANCELLED;
             case PREPARING -> next==OrderStatus.READY_FOR_PICKUP||next==OrderStatus.CANCELLED;
+            case DELIVERY_FAILED -> next==OrderStatus.READY_FOR_PICKUP||next==OrderStatus.CANCELLED||next==OrderStatus.REJECTED;
             default -> false;
         };
         if(!valid)throw conflict("Invalid order status transition from "+order.getStatus()+" to "+next);
@@ -113,11 +125,11 @@ public class OrderService {
         var items=orderItems.findByOrder_IdOrderById(order.getId()).stream().map(i->new OrderDtos.OrderItemResponse(i.getProductName(),i.getUnit().name(),i.getQuantity(),i.getUnitPrice(),i.getLineTotal())).toList();
         var events=history.findByOrder_IdOrderByCreatedAtAsc(order.getId()).stream().map(h->new OrderDtos.StatusEvent(h.getFromStatus(),h.getToStatus(),h.getReason(),h.getCreatedAt())).toList();
         OrderDtos.DriverLocationResponse location=null;
-        var assignment=assignments.findByOrder_Id(order.getId()).orElse(null);
+        var assignment=assignments.findFirstByOrder_IdAndStatusIn(order.getId(),List.of(AssignmentStatus.ASSIGNED,AssignmentStatus.ACCEPTED,AssignmentStatus.PICKED_UP)).orElse(null);
         if(assignment!=null&&assignment.getStatus()!=AssignmentStatus.DELIVERED){var latest=locations.findByAssignment_IdAndActiveTrue(assignment.getId()).orElse(null);if(latest!=null)location=new OrderDtos.DriverLocationResponse(latest.getLatitude(),latest.getLongitude(),latest.getUpdatedAt());}
         return new OrderDtos.OrderResponse(order.getId(),order.getOrderNumber(),order.getStatus(),"COD",order.getPaymentStatus(),order.getSubtotal(),order.getDeliveryCharge(),order.getTotalAmount(),
                 order.getRecipientName(),order.getRecipientPhone(),order.getAddressLine(),order.getHouseNumber(),order.getArea(),order.getLandmark(),order.getPincode(),order.getDeliveryInstructions(),
-                order.getDeliveryDate(),order.getDeliverySlot(),order.getCreatedAt(),items,events,deliveryCode,location);
+                order.getDeliveryDate(),order.getDeliverySlot(),order.getCreatedAt(),items,events,deliveryCode,location,order.getIdempotencyKey());
     }
     private boolean sellable(Product p){return p.isActive()&&p.isAvailable()&&p.getCategory().isActive();}
     private AppUser customer(String email){return users.findByEmail(email).filter(u->u.getRole()==Role.CUSTOMER&&u.isActive()).orElseThrow(()->new ResponseStatusException(HttpStatus.FORBIDDEN,"Customer account required"));}

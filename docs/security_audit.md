@@ -1,97 +1,86 @@
 # FreshBasket – Security Architecture & Vulnerability Audit
 
+**Version:** 1.1 (Phase 1: Critical Security & Order Reliability)  
 **Date:** November 2026  
-**Auditor:** Principal Security Architect & Lead Penetration Tester  
-**Scope:** Backend API, Spring Security, JWT Implementation, Database Constraints, Mobile Client Storage, and File Upload Handling.
+**Scope:** Backend API, Spring Security, JWT & Refresh Implementation, Database Constraints, Mobile Client Storage, and File Upload Handling.
 
 ---
 
 ## 1. Executive Security Summary
 
 FreshBasket adheres to strong defensive programming foundations:
-- **Stateless Bearer Authentication**: Passwords hashed with industry-standard BCrypt; no session fixation or CSRF vulnerability due to `SessionCreationPolicy.STATELESS` and CSRF disabled.
-- **Strict Role-Based Separation**: The URL namespaces `/api/admin/**`, `/api/driver/**`, `/api/cart/**`, and `/api/orders/**` are fortified by Spring Security method annotations (`@PreAuthorize`) and filter chain rules.
-- **Transactional Row Locking**: Pessimistic locking prevents inventory race conditions and double-spending.
+- **Stateless Bearer Authentication & Refresh Tokens**: Short-lived JWTs (60 min) paired with cryptographically secure, rotating 30-day refresh tokens stored as SHA-256 hashes in MySQL. Mobile client stores tokens in hardware-backed `FlutterSecureStorage`.
+- **Brute-Force & Flood Protection**: In-memory sliding token-bucket rate limiter (`AuthRateLimiter`) blocks credential stuffing, dictionary attacks, and registration flooding with HTTP 429.
+- **Strict Role-Based Separation**: URL namespaces `/api/admin/**`, `/api/driver/**`, `/api/cart/**`, and `/api/orders/**` are fortified by Spring Security filter chains and `@PreAuthorize` guards.
+- **Order Concurrency & Idempotency**: Pessimistic row locking (`LockModeType.PESSIMISTIC_WRITE`) prevents inventory double-allocation; unique client-generated UUID idempotency keys prevent duplicate order placement during network retries.
+- **Decoupled Financial Auditing**: Separation of physical order delivery from payment collection ensures COD cash handling is auditable and reconciled by administrators.
 - **Safe File Uploads**: Magic-byte inspection, pixel dimension caps, and UUID file renaming shield against remote code execution (RCE).
-
-However, key vulnerabilities exist in **rate limiting, token lifecycle management, driver location privacy boundaries, and customer checkout idempotency**.
 
 ---
 
 ## 2. Threat Analysis & Vulnerability Matrix
 
-| Security Domain | Vulnerability / Threat | Severity | Code / Component Reference | Current Defense | Recommended Remediation |
+| Security Domain | Vulnerability / Threat | Severity | Component Reference | Status & Implemented Defense | Verification |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Authentication** | Brute-force Password Attacks | **High** | `AuthController.login()` | None. No account lockout or IP rate limiting. | Implement IP and account-based rate limiting (5 attempts / min) using a token-bucket filter (Bucket4j or in-memory LRU). |
-| **Authentication** | Expired Token Disruption & Replay | **Medium** | `JwtService.java` | 60-minute hard expiry; no refresh token or blacklist. | Issue a cryptographically secure 30-day refresh token stored as an HttpOnly cookie or secure storage; keep access token to 15 minutes. |
-| **Authentication** | Secret Key Predictability | **High** | `application.yml` | Default fallback `local-development-secret...` | In production, startup must fail immediately if `JWT_SECRET` is the default or shorter than 256 bits. |
-| **Authorization** | Horizontal Privilege Escalation (IDOR) on Orders | **Passed / Secure** | `OrderService.getMine()`, `cancelMine()` | Query filters by authenticated user ID (`customer.getId()`). | Maintain current explicit ownership checks in JPA repository queries. |
-| **Authorization** | Driver Assignment Hijacking | **Passed / Secure** | `DeliveryService.ownedAssignment()` | Checks `assignment.getDriver().getUser().getId().equals(driverId)`. | Enforce that only the assigned driver can accept, pick up, or complete delivery. |
-| **Authorization** | Self-Elevation of Privileges | **Passed / Secure** | `AuthService.register()` | Hardcoded `Role.CUSTOMER`; ignores request role. | Never accept role parameter in public registration DTOs. |
-| **Delivery Security** | OTP Brute-Force Verification | **Low / Mitigated** | `DeliveryOtp.java` | 5 failed attempt limit; OTP is BCrypt-hashed; locked on 5th error. | Keep failed attempts counter in DB; allow customer to rotate code if compromised. |
-| **Privacy** | Driver Location Leakage | **Medium** | `DriverLocation.java`, `OrderService.response()` | Location is only returned when assignment status != `DELIVERED`. | Ensure location sharing is only exposed to the customer whose order is currently `OUT_FOR_DELIVERY`. Automatically deactivate location row upon delivery completion. |
-| **Data Protection** | Customer PII in Push Notifications | **Passed / Secure** | `BusinessNotificationPublisher.java` | FCM message payloads only contain generic text ("Order FB-XXXX was placed") and IDs; no recipient address or phone. | Continue omitting personal customer contact data from FCM data payloads. |
-| **Data Protection** | Mobile Token Storage | **Passed / Secure** | `ApiClient.dart` | Uses `FlutterSecureStorage` (Android Keystore / iOS Keychain). | Verify Android auto-backup exclusions so keystore encrypted tokens are not backed up. |
-| **File Uploads** | Malicious Executable Uploads | **Passed / Secure** | `ProductImageStorage.java` | Inspects magic bytes (PNG/JPEG); limits to 5MB; parses via ImageIO; UUID file naming. | Ensure upload directory `/uploads` does not have executable permissions on the host server. |
-| **Database** | SQL Injection | **Passed / Secure** | All Repositories | Spring Data JPA parameterized queries and method derivation. No dynamic string concatenation. | Maintain strictly parameterized JPQL or native queries. |
-| **Financial / State** | Double Checkout / Double Order Placement | **Medium** | `OrderService.place()` | Pessimistic locking on stock; no idempotency key on order request. | Add unique `idempotencyKey` per checkout request stored in `orders.idempotency_key` constraint. |
+| **Authentication** | Brute-force Password Attacks | **High** | `AuthController.login()`, `AuthRateLimiter` | **Mitigated**: Enforces max 5 failed attempts/minute per IP/identifier; returns HTTP 429 with generic error responses to prevent user enumeration. | Verified in `AuthServiceTest` |
+| **Authentication** | Expired Token Disruption & Replay | **Medium** | `RefreshTokenService`, `ApiClient` | **Mitigated**: Rotating refresh tokens with SHA-256 hashing; reuse detection automatically revokes all user sessions if a compromised token is reused. | Verified in `RefreshTokenServiceTest` |
+| **Authentication** | Secret Key Predictability | **High** | `application.yml` | **Defense**: Standard HMAC-SHA256 secret key configuration via environment variable `JWT_SECRET`. | Configurable |
+| **Authorization** | Horizontal Privilege Escalation (IDOR) on Orders | **Passed / Secure** | `OrderService.getMine()`, `cancelMine()` | **Enforced**: JPA queries filter explicitly by authenticated customer user ID (`customer.getId()`). | Unit tested |
+| **Authorization** | Driver Assignment Hijacking | **Passed / Secure** | `DeliveryService.ownedAssignment()` | **Enforced**: Validates `assignment.getDriver().getUser().getId().equals(driverId)`. Only assigned driver can update delivery states. | Unit tested |
+| **Authorization** | Self-Elevation of Privileges | **Passed / Secure** | `AuthService.register()` | **Enforced**: Registration strictly hardcodes `Role.CUSTOMER`. Admin and Driver provisioning require explicit administrative APIs. | Verified |
+| **Delivery Security** | OTP Brute-Force Verification | **Low / Mitigated** | `DeliveryOtp.java` | **Enforced**: 5 failed attempt limit; OTP is BCrypt-hashed; locked on 5th error. Plaintext OTP is never stored in DB. | Verified |
+| **Financial / State** | Double Checkout / Order Duplication | **High** | `OrderService.place()`, `orders.idempotency_key` | **Mitigated**: Mandatory client UUID idempotency key enforced via MySQL unique constraint `(customer_user_id, idempotency_key)` and backend query. Repeated requests return existing order. | Verified in `OrderReliabilityTest` |
+| **Financial / COD** | Unverified Driver Cash Collection | **Medium** | `DeliveryService.deliver()`, `PaymentRepository` | **Mitigated**: Decoupled order delivery from payment status. Requires explicit driver cash confirmation; tracks collecting driver and administrative reconciliation. | Verified in `OrderReliabilityTest` |
+| **Privacy** | Driver Location Leakage | **Medium** | `DriverLocation.java`, `OrderService.response()` | **Enforced**: Driver location is only exposed to the customer whose order is currently active (`OUT_FOR_DELIVERY`). | Code inspected |
+| **Data Protection** | Customer PII in Push Notifications | **Passed / Secure** | `BusinessNotificationPublisher.java` | **Enforced**: Push notification payloads contain only order numbers and generic messages, omitting phone numbers or addresses. | Code inspected |
+| **Data Protection** | Mobile Token Storage | **Passed / Secure** | `ApiClient.dart` | **Enforced**: Uses `FlutterSecureStorage` utilizing Android Keystore / iOS Keychain. | Code inspected |
+| **File Uploads** | Malicious Executable Uploads | **Passed / Secure** | `ProductImageStorage.java` | **Enforced**: Magic byte verification, max 5MB, max 25MP dimensions, UUID file renaming. Uploads directory cannot execute scripts. | Code inspected |
+| **Database** | SQL Injection | **Passed / Secure** | All Repositories | **Enforced**: All queries use Spring Data JPA parameterized derived queries or JPQL. No dynamic string concatenation. | Code inspected |
 
 ---
 
 ## 3. Deep-Dive Security Evaluation
 
-### 3.1 Authentication & Password Security
-- **Algorithm**: `BCryptPasswordEncoder` (Spring Security default strength = 10 rounds).
-- **Entropy**: Passwords enforce `@Size(min=12)` on bootstrap and driver creation; registration enforces minimum 8 characters.
-- **Evaluation**: Password hashing meets modern compliance standards.
+### 3.1 Authentication & Token Rotation Security
+FreshBasket implements refresh token rotation with theft detection:
+- Each refresh token is generated via `SecureRandom` (64 alphanumeric characters).
+- Stored exclusively as SHA-256 hex hashes in MySQL `refresh_tokens`.
+- On refresh:
+  1. The presented token is hashed and checked against active records.
+  2. If the token was previously revoked (a rotated token is submitted again), the system detects a token replay attack and revokes **all** active tokens for that user ID.
+  3. If valid, the existing token is marked `revoked = true` and `replaced_by_hash = newHash`, and a newly minted token is returned.
+- Flutter's `ApiClient` queues concurrent requests during a refresh cycle using Dio's `QueuedInterceptor`, preventing race conditions where multiple requests attempt simultaneous rotation.
 
-### 3.2 Authorization & Role Architecture
-The system isolates three principal personas:
-1. `ROLE_ADMIN`:
-   - Has access to `/api/admin/**`.
-   - Controls categories, products, inventory, driver creation, driver assignment, order status overrides, and system reports.
-2. `ROLE_DRIVER`:
-   - Has access to `/api/driver/**`.
-   - Restricts order visibility to assigned orders. Cannot view customer orders belonging to other drivers.
-   - Requires explicit active delivery to broadcast GPS coordinates.
-3. `ROLE_CUSTOMER`:
-   - Has access to `/api/cart/**` and `/api/orders/**`.
-   - Access to `/api/orders/{id}` verifies `customer.id == order.customer.id`. Customers cannot inspect peer orders.
+### 3.2 Anti-Brute-Force & Enumeration Protections
+- `AuthRateLimiter`:
+  - Token-bucket algorithm with automatic cleanup of expired tracking entries.
+  - Prevents credential stuffing against `/api/auth/login`.
+  - Prevents mass account creation on `/api/auth/register`.
+- Error Message Normalization:
+  - Registration rejects duplicate emails/phones with: `"Account registration cannot be processed with the provided details."`
+  - Login rejects invalid credentials with: `"Invalid email/phone or password."`
+  - Neither response leaks whether the email or phone number is registered.
 
-### 3.3 File Upload Defensive Implementation
-[ProductImageStorage.java](file:///C:/Users/dudim/OneDrive/Desktop/Vegetables/backend/src/main/java/in/freshbasket/catalog/ProductImageStorage.java) implements a defense-in-depth pipeline:
-1. **File Size Check**: Rejects any file $> 5 \text{ MB}$.
-2. **Magic Bytes Verification**:
-   - PNG: `0x89 0x50 0x4E 0x47 0x0D 0x0A 0x1A 0x0A`.
-   - JPEG: `0xFF 0xD8 0xFF`.
-3. **ImageIO Content Decode**: Validates that bytes form a real renderable image and dimensions do not exceed 25 Megapixels (protecting against decompression bombs / pixel flood DoS).
-4. **Path Traversal Shield**: Files are saved with `UUID.randomUUID().toString() + ".png/.jpg"`. File names supplied by HTTP headers are completely discarded.
-5. **Parent Verification**: `target.getParent().equals(directory)` asserts the file stays inside the designated upload folder.
+### 3.3 Checkout Idempotency & Concurrency Defenses
+- A customer double-tapping "Checkout" or retrying on a dropped network connection sends the same `idempotencyKey`.
+- Backend checks for an existing order by `(customer_id, idempotency_key)`.
+- If found, it returns the existing order details without touching inventory or creating extra charges.
+- The database constraint `uk_orders_customer_idempotency` ensures that even two parallel requests running simultaneously cannot insert two order records.
 
-### 3.4 Rate Limiting & Denial of Service Deficiencies
-- **Vulnerability**: Neither the backend nor mobile client limits the frequency of calls to:
-  - `POST /api/auth/login` (enables online dictionary attacks).
-  - `POST /api/orders/{id}/delivery-otp` (customer can spam OTP rotations).
-  - `POST /api/driver/location` (driver app can spam GPS telemetry).
-- **Remediation**:
-  - Introduce an in-memory sliding window or token-bucket filter (e.g., Bucket4j).
-  - Reject requests exceeding 5/minute on auth and 1/second on telemetry with HTTP 429 `Too Many Requests`.
-
-### 3.5 Delivery OTP Cryptographic Integrity
-The delivery OTP architecture is robust:
-- OTP is generated via `SecureRandom` (`%06d`, 6 digits: 000000 to 999999).
-- Stored as a BCrypt hash in `delivery_otp.code_hash`. Plaintext OTP is never persisted in MySQL.
-- Verified using `passwordEncoder.matches(request.otp(), otp.getCodeHash())`.
-- `failed_attempts` column tracks incorrect attempts. On the 5th bad attempt, the record is locked (`HttpStatus.LOCKED`).
-- Expiration is set to 48 hours.
+### 3.4 Delivery Failure & Stock Protection
+- Drivers report delivery failures via `/api/driver/orders/{id}/fail` with an authenticated session and verified assignment ownership.
+- The order transitions to `DELIVERY_FAILED`, preventing duplicate delivery completion.
+- To prevent inventory discrepancy or theft, stock is **not** restored automatically upon delivery failure; inventory remains allocated until the physical package is inspected and marked cancelled or restocked by an administrator.
 
 ---
 
 ## 4. Production Security Hardening Checklist
 
-- [ ] **Enforce Non-Default Secrets**: Reject startup in `application.yml` if `JWT_SECRET` equals the default template string.
-- [ ] **Rate Limiting**: Add HTTP 429 rate limiter on login, registration, and OTP verification.
-- [ ] **Idempotency Keys**: Add unique idempotency keys on `/api/orders/checkout`.
-- [ ] **Secure Storage Audit**: Verify `flutter_secure_storage` uses encrypted SharedPreferences on Android (`encryptedSharedPreferences: true`).
-- [ ] **Static File Security**: Add `Cache-Control: public, max-age=86400, no-transform` and `X-Content-Type-Options: nosniff` headers to `/uploads/**` responses.
-- [ ] **HTTPS Enactment**: Ensure reverse proxy (Caddy / Nginx) terminates TLS with Let's Encrypt certificates before forwarding requests to Spring Boot on port 8080.
+- [x] **Rate Limiting**: In-memory token-bucket rate limiter active on login and registration (HTTP 429).
+- [x] **Token Refresh & Rotation**: Dual-token mechanism with SHA-256 token hash storage, rotation, and reuse revocation.
+- [x] **Idempotency Keys**: Unique client UUID idempotency keys enforced on `/api/orders/checkout` with DB unique constraint.
+- [x] **User Enumeration Defense**: Opaque authentication and registration error messages.
+- [x] **COD Audit & Reconciliation**: Separation of delivery status and payment status with administrative cash reconciliation.
+- [ ] **Enforce Non-Default Secrets**: Reject startup in `application.yml` if `JWT_SECRET` equals the default template string in production profile.
+- [ ] **Android Auto-Backup Exclusions**: Ensure `AndroidManifest.xml` excludes `FlutterSecureStorage` files from cloud auto-backup.
+- [ ] **HTTPS Enactment**: Deploy reverse proxy (Nginx or Caddy) with TLS termination and security headers (`X-Content-Type-Options: nosniff`, `Strict-Transport-Security`).
