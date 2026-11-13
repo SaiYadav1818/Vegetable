@@ -1,0 +1,10 @@
+target/
+.idea/
+.vscode/
+*.iml
+.env
+!.env.example
+*.log
+build/
+.dart_tool/
+flutter_app/.packages
