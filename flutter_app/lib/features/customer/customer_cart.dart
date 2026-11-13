@@ -1,58 +1,82 @@
 import 'package:flutter/foundation.dart';
 import '../catalog/catalog_models.dart';
+import '../orders/order_models.dart';
 
-class CartLine {
-  CartLine({required this.product, this.quantity = 1});
-  final Product product;
-  int quantity;
-  num get lineTotal => product.price * quantity;
+abstract interface class CartGateway {
+  Future<CartSnapshot> getCart();
+  Future<CartSnapshot> addItem(int productId, {num quantity = 1});
+  Future<CartSnapshot> updateItem(int itemId, num quantity);
+  Future<CartSnapshot> removeItem(int itemId);
 }
 
-/// Phase 2 cart presentation state. Checkout and server cart synchronization
-/// are wired in Phase 4.
+/// Server-backed cart state; checkout revalidates every quantity and price.
 class CustomerCart extends ChangeNotifier {
-  final Map<int, CartLine> _lines = {};
-  List<CartLine> get lines => List.unmodifiable(_lines.values);
-  int get itemCount =>
-      _lines.values.fold(0, (sum, line) => sum + line.quantity);
-  num get subtotal =>
-      _lines.values.fold<num>(0, (sum, line) => sum + line.lineTotal);
+  CustomerCart(this._gateway);
+  final CartGateway _gateway;
+  CartSnapshot _snapshot = const CartSnapshot(items: [], subtotal: 0);
+  bool _loading = false;
+  String? _error;
+  CartSnapshot get snapshot => _snapshot;
+  List<CartLine> get lines => _snapshot.items;
+  num get itemCount => _snapshot.itemCount;
+  num get subtotal => _snapshot.subtotal;
+  bool get loading => _loading;
+  String? get error => _error;
+  num quantityFor(int productId) =>
+      _snapshot.items
+          .where((l) => l.productId == productId)
+          .firstOrNull
+          ?.quantity ??
+      0;
 
-  void add(Product product) {
-    final line = _lines[product.id];
-    if (line == null) {
-      _lines[product.id] = CartLine(product: product);
-    } else if (line.quantity < product.stock) {
-      line.quantity++;
+  Future<void> load() async {
+    _loading = true;
+    _error = null;
+    notifyListeners();
+    try {
+      _snapshot = await _gateway.getCart();
+    } catch (e) {
+      _error = e.toString();
+      rethrow;
+    } finally {
+      _loading = false;
+      notifyListeners();
     }
-    notifyListeners();
   }
 
-  void increment(int productId) {
-    final line = _lines[productId];
-    if (line == null || line.quantity >= line.product.stock) return;
-    line.quantity++;
-    notifyListeners();
+  Future<void> add(Product product) async {
+    final current = quantityFor(product.id);
+    if (current + 1 > product.stock)
+      throw StateError('Requested quantity exceeds current stock');
+    await _update(() => _gateway.addItem(product.id));
   }
 
-  void decrement(int productId) {
-    final line = _lines[productId];
-    if (line == null) return;
+  Future<void> increment(CartLine line) async {
+    if (line.quantity + 1 > line.stock)
+      throw StateError('Requested quantity exceeds current stock');
+    await _update(() => _gateway.updateItem(line.id, line.quantity + 1));
+  }
+
+  Future<void> decrement(CartLine line) async {
     if (line.quantity <= 1) {
-      _lines.remove(productId);
+      await _update(() => _gateway.removeItem(line.id));
     } else {
-      line.quantity--;
+      await _update(() => _gateway.updateItem(line.id, line.quantity - 1));
     }
-    notifyListeners();
   }
 
-  void remove(int productId) {
-    _lines.remove(productId);
-    notifyListeners();
-  }
-
-  void clear() {
-    _lines.clear();
-    notifyListeners();
+  Future<void> remove(CartLine line) =>
+      _update(() => _gateway.removeItem(line.id));
+  Future<void> refresh() => load();
+  Future<void> _update(Future<CartSnapshot> Function() action) async {
+    _error = null;
+    try {
+      _snapshot = await action();
+      notifyListeners();
+    } catch (e) {
+      _error = e.toString();
+      notifyListeners();
+      rethrow;
+    }
   }
 }

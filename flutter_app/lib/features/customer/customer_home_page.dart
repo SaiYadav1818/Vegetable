@@ -7,6 +7,7 @@ import '../../core/widgets/app_states.dart';
 import '../auth/auth_api.dart';
 import '../catalog/catalog_api.dart';
 import '../catalog/catalog_models.dart';
+import '../orders/orders_api.dart';
 import 'customer_cart.dart';
 
 class CustomerHomePage extends StatefulWidget {
@@ -14,28 +15,43 @@ class CustomerHomePage extends StatefulWidget {
       {super.key,
       required this.client,
       required this.session,
-      required this.onSignOut});
+      required this.onSignOut,
+      required this.onCheckout,
+      required this.onOrders});
   final ApiClient client;
   final AuthSession session;
   final VoidCallback onSignOut;
+  final Future<void> Function() onCheckout;
+  final VoidCallback onOrders;
   @override
   State<CustomerHomePage> createState() => _CustomerHomePageState();
 }
 
 class _CustomerHomePageState extends State<CustomerHomePage> {
   late final CatalogApi _api = CatalogApi(widget.client);
+  late final OrdersApi _orders = OrdersApi(widget.client);
   late Future<_StoreCatalog> _catalog = _loadCatalog();
-  final _cart = CustomerCart();
+  late final CustomerCart _cart = CustomerCart(_orders);
   final _search = TextEditingController();
   int _tab = 0;
   int? _selectedCategory;
   String _query = '';
   String _deliveryArea = 'Choose delivery area';
 
+  Future<void> _checkout() async {
+    await widget.onCheckout();
+    if (!mounted) return;
+    await _cart.refresh();
+    setState(() => _tab = 0);
+  }
+
   @override
   void initState() {
     super.initState();
     _loadSavedArea();
+    _cart.load().then((_) {
+      if (mounted) setState(() {});
+    }).catchError((_) {});
   }
 
   Future<void> _loadSavedArea() async {
@@ -57,7 +73,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
 
   Future<void> _refresh() async {
     setState(() => _catalog = _loadCatalog());
-    await _catalog;
+    await Future.wait([_catalog, _cart.refresh()]);
   }
 
   Future<void> _chooseArea() async {
@@ -115,16 +131,34 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
     }).toList();
   }
 
-  void _addToCart(Product product) {
-    if (product.stock < 1) return;
-    _cart.add(product);
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text('${product.name} added to your basket'),
-      behavior: SnackBarBehavior.floating,
-      duration: const Duration(seconds: 1),
-      action: SnackBarAction(
-          label: 'VIEW', onPressed: () => setState(() => _tab = 2)),
-    ));
+  Future<void> _addToCart(Product product) async {
+    try {
+      await _cart.add(product);
+      if (!mounted) return;
+      setState(() {});
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('${product.name} added to your basket'),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 1),
+        action: SnackBarAction(
+            label: 'VIEW', onPressed: () => setState(() => _tab = 2)),
+      ));
+    } catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_orders.describeError(error))));
+    }
+  }
+
+  Future<void> _changeCart(Future<void> Function() action) async {
+    try {
+      await action();
+      if (mounted) setState(() {});
+    } catch (error) {
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(_orders.describeError(error))));
+    }
   }
 
   @override
@@ -185,7 +219,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
           future: _catalog,
           builder: (context, snapshot) {
             if (snapshot.connectionState == ConnectionState.waiting) {
-              return const LoadingState(message: 'Finding fresh vegetables…');
+              return const LoadingState(message: 'Finding fresh vegetablesâ€¦');
             }
             if (snapshot.hasError) {
               return ErrorState(
@@ -381,14 +415,20 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
             itemBuilder: (context, index) => _ProductCard(
                 product: products[index],
                 imageBase: widget.client.dio.options.baseUrl,
-                quantity: _cart.lines
-                        .where((line) => line.product.id == products[index].id)
-                        .firstOrNull
-                        ?.quantity ??
-                    0,
+                quantity: _cart.quantityFor(products[index].id),
                 onAdd: () => _addToCart(products[index]),
-                onIncrement: () => _cart.increment(products[index].id),
-                onDecrement: () => _cart.decrement(products[index].id)),
+                onIncrement: () {
+                  final line = _cart.lines
+                      .where((l) => l.productId == products[index].id)
+                      .firstOrNull;
+                  if (line != null) _changeCart(() => _cart.increment(line));
+                },
+                onDecrement: () {
+                  final line = _cart.lines
+                      .where((l) => l.productId == products[index].id)
+                      .firstOrNull;
+                  if (line != null) _changeCart(() => _cart.decrement(line));
+                }),
           );
         }),
       );
@@ -463,6 +503,11 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
   }
 
   Widget _cartPage() {
+    if (_cart.loading)
+      return const LoadingState(message: 'Loading your basket...');
+    if (_cart.error != null && _cart.lines.isEmpty)
+      return ErrorState(
+          message: _cart.error!, onRetry: () => _changeCart(_cart.refresh));
     if (_cart.lines.isEmpty) {
       return const EmptyState(
           icon: Icons.shopping_basket_outlined,
@@ -482,28 +527,26 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                         padding: const EdgeInsets.all(12),
                         child: Row(children: [
                           _ProductImage(
-                              url: _resolvedImage(line.product.imageUrl),
-                              size: 72),
+                              url: _resolvedImage(line.imageUrl), size: 72),
                           const SizedBox(width: 12),
                           Expanded(
                               child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                Text(line.product.name,
+                                Text(line.name,
                                     style: Theme.of(context)
                                         .textTheme
                                         .titleMedium),
-                                Text(
-                                    'Rs. ${line.product.price} / ${line.product.unit}',
+                                Text('Rs. ${line.price} / ${line.unit}',
                                     style:
                                         Theme.of(context).textTheme.bodySmall),
                                 const SizedBox(height: 8),
                                 _QuantityControl(
                                     quantity: line.quantity,
-                                    onIncrement: () =>
-                                        _cart.increment(line.product.id),
-                                    onDecrement: () =>
-                                        _cart.decrement(line.product.id)),
+                                    onIncrement: () => _changeCart(
+                                        () => _cart.increment(line)),
+                                    onDecrement: () => _changeCart(
+                                        () => _cart.decrement(line))),
                               ])),
                           Text('Rs. ${line.lineTotal.toStringAsFixed(2)}',
                               style: Theme.of(context).textTheme.titleSmall),
@@ -523,7 +566,8 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                       Text('Rs. ${_cart.subtotal.toStringAsFixed(2)}',
                           style: Theme.of(context).textTheme.titleLarge)
                     ])),
-                FilledButton(onPressed: null, child: const Text('Checkout'))
+                FilledButton(
+                    onPressed: _checkout, child: const Text('Checkout'))
               ]))),
     ]);
   }
@@ -549,6 +593,14 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                             style: Theme.of(context).textTheme.bodySmall),
                       ])),
                 ]))),
+        const SizedBox(height: 12),
+        Card(
+            child: ListTile(
+                leading: const Icon(Icons.receipt_long_outlined),
+                title: const Text('My orders'),
+                subtitle: const Text('Track deliveries and view receipts'),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: widget.onOrders)),
         const SizedBox(height: 12),
         Card(
             child: ListTile(
@@ -633,7 +685,7 @@ class _ProductCard extends StatelessWidget {
       required this.onDecrement});
   final Product product;
   final String imageBase;
-  final int quantity;
+  final num quantity;
   final VoidCallback onAdd;
   final VoidCallback onIncrement;
   final VoidCallback onDecrement;
@@ -736,7 +788,7 @@ class _QuantityControl extends StatelessWidget {
       {required this.quantity,
       required this.onIncrement,
       required this.onDecrement});
-  final int quantity;
+  final num quantity;
   final VoidCallback onIncrement;
   final VoidCallback onDecrement;
   @override

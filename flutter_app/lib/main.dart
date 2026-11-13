@@ -9,6 +9,9 @@ import 'features/auth/auth_page.dart';
 import 'features/catalog/admin_products_page.dart';
 import 'features/customer/customer_home_page.dart';
 import 'features/driver/driver_landing_page.dart';
+import 'features/orders/checkout_page.dart';
+import 'features/orders/customer_orders_page.dart';
+import 'features/orders/admin_orders_page.dart';
 
 void main() {
   const configuredUrl = String.fromEnvironment('API_BASE_URL');
@@ -35,7 +38,12 @@ class _FreshBasketAppState extends State<FreshBasketApp> {
     refreshListenable: _session,
     redirect: (context, state) {
       final destination = _session.destination;
-      if (state.matchedLocation == destination) return null;
+      final path = state.matchedLocation;
+      if (path == destination ||
+          path.startsWith('$destination/') ||
+          (destination == '/customer' &&
+              (path == '/checkout' || path == '/orders')) ||
+          (destination == '/admin' && path == '/admin/orders')) return null;
       return destination;
     },
     routes: [
@@ -45,20 +53,36 @@ class _FreshBasketAppState extends State<FreshBasketApp> {
               client: widget.client, onAuthenticated: _session.signIn)),
       GoRoute(
           path: '/customer',
-          builder: (_, __) => CustomerHomePage(
+          builder: (context, __) => CustomerHomePage(
               client: widget.client,
               session: _session.session!,
-              onSignOut: _signOut)),
+              onSignOut: _signOut,
+              onCheckout: () async {
+                await context.push('/checkout');
+              },
+              onOrders: () => context.push('/orders'))),
+      GoRoute(
+          path: '/checkout',
+          builder: (_, __) => CheckoutPage(client: widget.client)),
+      GoRoute(
+          path: '/orders',
+          builder: (_, __) => CustomerOrdersPage(client: widget.client)),
       GoRoute(
           path: '/admin',
           builder: (_, __) => AdminProductsPage(
               client: widget.client,
               adminName: _session.session!.fullName,
-              onSignOut: _signOut)),
+              onSignOut: _signOut,
+              onOrders: () => _router.push('/admin/orders'))),
+      GoRoute(
+          path: '/admin/orders',
+          builder: (_, __) => AdminOrdersPage(client: widget.client)),
       GoRoute(
           path: '/driver',
           builder: (_, __) => DriverLandingPage(
-              session: _session.session!, onSignOut: _signOut)),
+              client: widget.client,
+              session: _session.session!,
+              onSignOut: _signOut)),
     ],
   );
 

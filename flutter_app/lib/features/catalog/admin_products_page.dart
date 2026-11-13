@@ -12,10 +12,12 @@ class AdminProductsPage extends StatefulWidget {
     required this.client,
     required this.adminName,
     this.onSignOut,
+    this.onOrders,
   });
   final ApiClient client;
   final String adminName;
   final VoidCallback? onSignOut;
+  final VoidCallback? onOrders;
   @override
   State<AdminProductsPage> createState() => _AdminProductsPageState();
 }
@@ -141,6 +143,10 @@ class _AdminProductsPageState extends State<AdminProductsPage> {
         appBar: AppBar(
           title: const Text('Products & inventory'),
           actions: [
+            IconButton(
+                tooltip: 'Orders',
+                icon: const Icon(Icons.receipt_long),
+                onPressed: widget.onOrders),
             IconButton(
                 tooltip: 'Categories',
                 icon: const Icon(Icons.category_outlined),
