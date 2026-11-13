@@ -38,7 +38,7 @@ flutter pub get
 flutter run
 ```
 
-Android emulator defaults to `http://10.0.2.2:8080`; desktop and Web default to `http://localhost:8080`. Override with `flutter run --dart-define=API_BASE_URL=http://your-host:8080`. The current Flutter client supports admin sign-in and live category, product, and inventory management. The Android debug manifest permits local HTTP during development; release Android builds keep cleartext traffic disabled. Flutter Web uses a development CORS allowlist for localhost origins.
+Android emulator defaults to `http://10.0.2.2:8080`; desktop and Web default to `http://localhost:8080`. Override with `flutter run --dart-define=API_BASE_URL=http://your-host:8080`. The Flutter client has customer registration/login, role-based destinations, a live catalog home and category browser, plus admin category/product/inventory management. The Phase 2 customer basket is kept in memory; server-side cart and checkout are Phase 4. The Android debug manifest permits local HTTP during development; release Android builds keep cleartext traffic disabled. Flutter Web uses a development CORS allowlist for localhost origins.
 
 ## Current phase boundary
 

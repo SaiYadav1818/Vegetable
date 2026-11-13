@@ -1,8 +1,14 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import 'package:provider/provider.dart';
 import 'core/network/api_client.dart';
-import 'features/auth/auth_api.dart';
+import 'core/session/session_controller.dart';
+import 'core/theme/app_theme.dart';
+import 'features/auth/auth_page.dart';
 import 'features/catalog/admin_products_page.dart';
+import 'features/customer/customer_home_page.dart';
+import 'features/driver/driver_landing_page.dart';
 
 void main() {
   const configuredUrl = String.fromEnvironment('API_BASE_URL');
@@ -11,167 +17,71 @@ void main() {
       : (!kIsWeb && defaultTargetPlatform == TargetPlatform.android)
           ? 'http://10.0.2.2:8080'
           : 'http://localhost:8080';
-  final client = ApiClient(baseUrl: baseUrl);
-  runApp(FreshBasketApp(client: client));
+  runApp(FreshBasketApp(client: ApiClient(baseUrl: baseUrl)));
 }
 
-class FreshBasketApp extends StatelessWidget {
+class FreshBasketApp extends StatefulWidget {
   const FreshBasketApp({super.key, required this.client});
   final ApiClient client;
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-        title: 'FreshBasket',
-        debugShowCheckedModeBanner: false,
-        theme: ThemeData(
-          colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF2E7D32)),
-          useMaterial3: true,
-          scaffoldBackgroundColor: const Color(0xFFFAFCF8),
-        ),
-        home: SignInPage(client: client),
-      );
+  State<FreshBasketApp> createState() => _FreshBasketAppState();
 }
 
-class SignInPage extends StatefulWidget {
-  const SignInPage({super.key, required this.client});
-  final ApiClient client;
-  @override
-  State<SignInPage> createState() => _SignInPageState();
-}
+class _FreshBasketAppState extends State<FreshBasketApp> {
+  late final SessionController _session = SessionController();
+  late final GoRouter _router = GoRouter(
+    initialLocation: '/auth',
+    refreshListenable: _session,
+    redirect: (context, state) {
+      final destination = _session.destination;
+      if (state.matchedLocation == destination) return null;
+      return destination;
+    },
+    routes: [
+      GoRoute(
+          path: '/auth',
+          builder: (_, __) => AuthPage(
+              client: widget.client, onAuthenticated: _session.signIn)),
+      GoRoute(
+          path: '/customer',
+          builder: (_, __) => CustomerHomePage(
+              client: widget.client,
+              session: _session.session!,
+              onSignOut: _signOut)),
+      GoRoute(
+          path: '/admin',
+          builder: (_, __) => AdminProductsPage(
+              client: widget.client,
+              adminName: _session.session!.fullName,
+              onSignOut: _signOut)),
+      GoRoute(
+          path: '/driver',
+          builder: (_, __) => DriverLandingPage(
+              session: _session.session!, onSignOut: _signOut)),
+    ],
+  );
 
-class _SignInPageState extends State<SignInPage> {
-  final _form = GlobalKey<FormState>();
-  final _email = TextEditingController();
-  final _password = TextEditingController();
-  bool _busy = false;
-  String? _error;
+  Future<void> _signOut() async {
+    await widget.client.clearAccessToken();
+    _session.signOut();
+  }
 
   @override
   void dispose() {
-    _email.dispose();
-    _password.dispose();
+    _router.dispose();
+    _session.dispose();
     super.dispose();
   }
 
-  Future<void> _signIn() async {
-    if (!_form.currentState!.validate()) return;
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final session = await AuthApi(
-        widget.client,
-      ).login(_email.text.trim(), _password.text);
-      if (!mounted) return;
-      if (session.role != 'ADMIN') {
-        await widget.client.clearAccessToken();
-        setState(
-          () => _error = 'This Phase 3 workspace is for admin accounts.',
-        );
-      } else {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute<void>(
-            builder: (_) => AdminProductsPage(
-              client: widget.client,
-              adminName: session.fullName,
-            ),
-          ),
-        );
-      }
-    } catch (_) {
-      if (mounted) {
-        setState(
-          () =>
-              _error = 'Sign in failed. Check your details and API connection.',
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
   @override
-  Widget build(BuildContext context) => Scaffold(
-        body: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 420),
-            child: Card(
-              margin: const EdgeInsets.all(24),
-              child: Padding(
-                padding: const EdgeInsets.all(28),
-                child: Form(
-                  key: _form,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const Icon(Icons.eco, size: 52, color: Color(0xFF2E7D32)),
-                      const SizedBox(height: 12),
-                      Text(
-                        'FreshBasket',
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context)
-                            .textTheme
-                            .headlineMedium
-                            ?.copyWith(
-                              fontWeight: FontWeight.bold,
-                            ),
-                      ),
-                      const SizedBox(height: 6),
-                      const Text('Admin sign in', textAlign: TextAlign.center),
-                      const SizedBox(height: 24),
-                      TextFormField(
-                        controller: _email,
-                        keyboardType: TextInputType.emailAddress,
-                        decoration: const InputDecoration(
-                          labelText: 'Email',
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (v) => v == null || !v.contains('@')
-                            ? 'Enter a valid email'
-                            : null,
-                      ),
-                      const SizedBox(height: 14),
-                      TextFormField(
-                        controller: _password,
-                        obscureText: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Password',
-                          border: OutlineInputBorder(),
-                        ),
-                        validator: (v) => v == null || v.isEmpty
-                            ? 'Enter your password'
-                            : null,
-                        onFieldSubmitted: (_) => _signIn(),
-                      ),
-                      if (_error != null) ...[
-                        const SizedBox(height: 12),
-                        Text(
-                          _error!,
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.error,
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 18),
-                      FilledButton(
-                        onPressed: _busy ? null : _signIn,
-                        child: _busy
-                            ? const SizedBox(
-                                width: 20,
-                                height: 20,
-                                child:
-                                    CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Text('Sign in'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
+  Widget build(BuildContext context) => ChangeNotifierProvider.value(
+        value: _session,
+        child: MaterialApp.router(
+          title: 'FreshBasket',
+          debugShowCheckedModeBanner: false,
+          theme: AppTheme.light(),
+          routerConfig: _router,
         ),
       );
 }

@@ -11,9 +11,11 @@ class AdminProductsPage extends StatefulWidget {
     super.key,
     required this.client,
     required this.adminName,
+    this.onSignOut,
   });
   final ApiClient client;
   final String adminName;
+  final VoidCallback? onSignOut;
   @override
   State<AdminProductsPage> createState() => _AdminProductsPageState();
 }
@@ -54,6 +56,11 @@ class _AdminProductsPageState extends State<AdminProductsPage> {
           ],
         ),
         actions: [
+          if (widget.onSignOut != null)
+            IconButton(
+                tooltip: 'Sign out',
+                onPressed: widget.onSignOut,
+                icon: const Icon(Icons.logout)),
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancel'),
