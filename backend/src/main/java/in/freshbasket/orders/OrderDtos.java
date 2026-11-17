@@ -27,7 +27,19 @@ public final class OrderDtos {
             BigDecimal subtotal,BigDecimal deliveryCharge,BigDecimal totalAmount,String recipientName,String recipientPhone,
             String addressLine,String houseNumber,String area,String landmark,String pincode,String deliveryInstructions,
             LocalDate deliveryDate,DeliverySlot deliverySlot,Instant createdAt,List<OrderItemResponse> items,
-            List<StatusEvent> statusHistory,String deliveryOtp,DriverLocationResponse driverLocation,String idempotencyKey){}
+            List<StatusEvent> statusHistory,String deliveryOtp,DriverLocationResponse driverLocation,String idempotencyKey,String cancellationReason){
+        public OrderResponse(Long id,String orderNumber,OrderStatus status,String paymentMethod,PaymentStatus paymentStatus,
+                BigDecimal subtotal,BigDecimal deliveryCharge,BigDecimal totalAmount,String recipientName,String recipientPhone,
+                String addressLine,String houseNumber,String area,String landmark,String pincode,String deliveryInstructions,
+                LocalDate deliveryDate,DeliverySlot deliverySlot,Instant createdAt,List<OrderItemResponse> items,
+                List<StatusEvent> statusHistory,String deliveryOtp,DriverLocationResponse driverLocation,String idempotencyKey) {
+            this(id, orderNumber, status, paymentMethod, paymentStatus, subtotal, deliveryCharge, totalAmount, recipientName, recipientPhone,
+                    addressLine, houseNumber, area, landmark, pincode, deliveryInstructions, deliveryDate, deliverySlot, createdAt, items,
+                    statusHistory, deliveryOtp, driverLocation, idempotencyKey, null);
+        }
+    }
+    public record ReorderItemDetail(Long productId, String productName, BigDecimal requestedQuantity, BigDecimal addedQuantity, boolean outOfStock){}
+    public record ReorderResponse(int itemsAdded, int itemsUnavailable, CartResponse cart, List<ReorderItemDetail> details){}
     public record OrderStatusRequest(@NotNull OrderStatus status,@Size(max=300) String reason){}
     public record CancelRequest(@Size(max=300) String reason){}
     public record DeliveryCodeResponse(String deliveryOtp){}

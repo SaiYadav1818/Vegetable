@@ -81,6 +81,57 @@ class OrdersApi implements CartGateway {
               data: reason == null ? null : {'reason': reason}))
           .data!);
 
+  Future<ReorderResponse> reorder(int orderId) async =>
+      ReorderResponse.fromJson((await client.dio
+              .post<Map<String, dynamic>>('/api/orders/$orderId/reorder'))
+          .data!);
+
+  Future<List<CustomerAddress>> getAddresses() async {
+    final res = await client.dio.get<List<dynamic>>('/api/customer/addresses');
+    return (res.data ?? const [])
+        .map((e) => CustomerAddress.fromJson(e as Map<String, dynamic>))
+        .toList();
+  }
+
+  Future<CustomerAddress> createAddress(CustomerAddress address) async =>
+      CustomerAddress.fromJson((await client.dio.post<Map<String, dynamic>>(
+              '/api/customer/addresses',
+              data: address.toJson()))
+          .data!);
+
+  Future<CustomerAddress> updateAddress(int id, CustomerAddress address) async =>
+      CustomerAddress.fromJson((await client.dio.put<Map<String, dynamic>>(
+              '/api/customer/addresses/$id',
+              data: address.toJson()))
+          .data!);
+
+  Future<void> deleteAddress(int id) async {
+    await client.dio.delete<void>('/api/customer/addresses/$id');
+  }
+
+  Future<CustomerAddress> setDefaultAddress(int id) async =>
+      CustomerAddress.fromJson((await client.dio.put<Map<String, dynamic>>(
+              '/api/customer/addresses/$id/default'))
+          .data!);
+
+  Future<ShopSettings> getShopSettings() async => ShopSettings.fromJson(
+      (await client.dio.get<Map<String, dynamic>>('/api/shop/settings')).data!);
+
+  Future<ShopSettings> updateShopSettings(ShopSettings settings) async =>
+      ShopSettings.fromJson((await client.dio.put<Map<String, dynamic>>(
+              '/api/admin/shop-settings',
+              data: settings.toJson()))
+          .data!);
+
+  Future<AnalyticsOverview> getAnalyticsOverview() async =>
+      AnalyticsOverview.fromJson((await client.dio
+              .get<Map<String, dynamic>>('/api/admin/analytics/overview'))
+          .data!);
+
+  Future<OrderRecord> adminCancelOrder(int id, {String? reason}) async =>
+      updateOrderStatus(id, 'CANCELLED',
+          reason: reason ?? 'Cancelled by admin');
+
   Future<String> rotateDeliveryOtp(int id) async {
     final response = await client.dio
         .post<Map<String, dynamic>>('/api/orders/$id/delivery-otp');

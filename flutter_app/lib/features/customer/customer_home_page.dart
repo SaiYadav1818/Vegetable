@@ -56,10 +56,25 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
   }
 
   Future<_CatalogData> _loadCatalog() async {
-    final result = await Future.wait<Object>(
-        [_catalogApi.getCategories(), _catalogApi.getProducts(size: 50)]);
+    final result = await Future.wait<Object>([
+      _catalogApi.getCategories(),
+      _catalogApi.getProducts(size: 50),
+      _ordersApi.getShopSettings().catchError((_) => const ShopSettings(
+        id: 1,
+        shopName: 'FreshBasket Neighborhood Mart',
+        contactPhone: '+91 98765 43210',
+        shopAddress: '12/4 Green Avenue, Bangalore',
+        openingTime: '06:30',
+        closingTime: '21:30',
+        openToday: true,
+        minOrderValue: 100,
+        deliveryCharge: 30,
+        freeDeliveryThreshold: 500,
+        announcementBanner: 'Fresh morning farm arrivals available daily from 6:30 AM!',
+      )),
+    ]);
     return _CatalogData(
-        result[0] as List<Category>, result[1] as List<Product>);
+        result[0] as List<Category>, result[1] as List<Product>, result[2] as ShopSettings);
   }
 
   Future<void> _refresh() async {
@@ -354,7 +369,7 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                               label: Text(product.name),
                               onPressed: () => _openProduct(product)))
                           .toList()))),
-        SliverToBoxAdapter(child: _promoBanner()),
+        SliverToBoxAdapter(child: _promoBanner(data.shopSettings)),
         SliverToBoxAdapter(
             child: SectionTitle('Shop by category',
                 actionLabel: 'See all', onAction: () => _changeTab(1))),
@@ -398,11 +413,11 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
     );
   }
 
-  Widget _promoBanner() => Container(
+  Widget _promoBanner([ShopSettings? settings]) => Container(
         margin: const EdgeInsets.fromLTRB(18, 18, 18, 0),
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
-            color: AppColors.paleGreen,
+            color: settings != null && !settings.openToday ? const Color(0xFFFFF3E0) : AppColors.paleGreen,
             borderRadius: BorderRadius.circular(AppRadius.lg)),
         child: Row(children: [
           Expanded(
@@ -415,19 +430,21 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
                     decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(AppRadius.pill)),
-                    child: Text('FRESH FROM LOCAL SHOPS',
+                    child: Text(settings != null && !settings.openToday ? 'STORE CURRENTLY CLOSED' : 'FRESH FROM LOCAL SHOPS',
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                            color: AppColors.darkGreen,
+                            color: settings != null && !settings.openToday ? Colors.deepOrange : AppColors.darkGreen,
                             fontWeight: FontWeight.w800,
                             letterSpacing: .4))),
                 const SizedBox(height: 12),
-                Text('Good food starts\nwith fresh picks.',
+                Text(settings?.announcementBanner ?? 'Good food starts\nwith fresh picks.',
                     style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        fontSize: 22,
-                        height: 1.15,
+                        fontSize: 18,
+                        height: 1.2,
                         fontWeight: FontWeight.w800)),
                 const SizedBox(height: 8),
-                Text('Browse vegetables for today.',
+                Text(settings != null
+                    ? 'Free delivery on orders above ₹${settings.freeDeliveryThreshold.toStringAsFixed(0)} · Daily hours ${settings.openingTime} - ${settings.closingTime}'
+                    : 'Browse fresh vegetables for today.',
                     style: Theme.of(context).textTheme.bodySmall),
                 const SizedBox(height: 12),
                 TextButton.icon(
@@ -709,9 +726,10 @@ class _CustomerHomePageState extends State<CustomerHomePage> {
 }
 
 class _CatalogData {
-  const _CatalogData(this.categories, this.products);
+  const _CatalogData(this.categories, this.products, [this.shopSettings]);
   final List<Category> categories;
   final List<Product> products;
+  final ShopSettings? shopSettings;
 }
 
 IconData _categoryIcon(String name) {

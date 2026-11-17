@@ -15,5 +15,6 @@ public class CustomerOrdersController {
     @GetMapping("/my") public Page<OrderDtos.OrderResponse> mine(Authentication auth,@PageableDefault(size=20,sort="createdAt",direction=Sort.Direction.DESC) Pageable pageable){return orders.mine(auth.getName(),pageable);}
     @GetMapping("/{id}") public OrderDtos.OrderResponse get(Authentication auth,@PathVariable long id){return orders.getMine(id,auth.getName());}
     @PostMapping("/{id}/cancel") public OrderDtos.OrderResponse cancel(Authentication auth,@PathVariable long id,@RequestBody(required=false) OrderDtos.CancelRequest request){return orders.cancelMine(id,auth.getName(),request==null?null:request.reason());}
+    @PostMapping("/{id}/reorder") public OrderDtos.ReorderResponse reorder(Authentication auth,@PathVariable long id){return orders.reorder(id,auth.getName());}
     @PostMapping("/{id}/delivery-otp") public OrderDtos.DeliveryCodeResponse rotateOtp(Authentication auth,@PathVariable long id){return new OrderDtos.DeliveryCodeResponse(orders.rotateDeliveryOtp(id,auth.getName()));}
 }

@@ -1,20 +1,76 @@
 # FreshBasket
 
-FreshBasket is a local-first vegetable ordering and delivery project for neighborhood shops. The repository contains the Phase 1 identity foundation, Phase 2 Flutter authentication/customer home, and Phase 3 catalog/inventory work: a Spring Boot REST API, MySQL/Flyway migrations, and a Flutter client with role-based navigation and admin product management.
+FreshBasket is a full-stack, local-first vegetable ordering and delivery platform built for neighborhood shops. The repository contains a complete Spring Boot REST API (Java 17, Spring Boot 3.4.4, MySQL 8.4, Flyway migrations) and a multi-persona Flutter application (Customer, Admin, and Delivery Driver).
 
-## Run locally
+---
 
-1. Start MySQL 8.4 with Docker Compose: `docker compose up -d mysql`.
-2. In `backend`, set `ADMIN_BOOTSTRAP_ENABLED=true`, `ADMIN_BOOTSTRAP_EMAIL`, and a private `ADMIN_BOOTSTRAP_PASSWORD` of at least 12 characters for the first startup. Start the API with `mvn spring-boot:run`. The bootstrap creates an admin only when no admin exists; turn the flag off after that first run.
-3. From `flutter_app`, run `flutter pub get` and `flutter run -d chrome` or `flutter run -d windows`. Use `flutter devices` to see available targets. Android emulator requests use `10.0.2.2` for the host API.
+## Key Features & End-to-End Capabilities
 
-The Flutter app reads real catalog and category data. Product and category maintenance and inventory changes require an admin JWT. Public registration creates customer accounts only. The Phase 2 customer basket is in-memory UI state; server cart and checkout arrive in Phase 4. Configure `API_BASE_URL` at launch when the API host differs from the local defaults.
+### 1. Customer Experience
+- **Catalog & Safety Stock Buffer**: Browse real-time fresh vegetable categories with sellable stock calculations that prevent ordering into store safety buffers.
+- **Server Cart & Idempotent Checkout**: Multi-item persistent cart with pessimistic locking at checkout and unique client idempotency keys (`idempotency_key`) to prevent duplicate transactions.
+- **Saved Addresses**: Manage multiple delivery addresses (Home, Work, etc.) with default address auto-selection and 1-tap checkout.
+- **One-Tap Reorder**: Re-buy past orders instantly with automatic inventory availability checking and cart population.
+- **Order Lifecycle & OTP Tracking**: Live order tracking, OTP generation and rotation, and structured cancellation with immediate inventory restoration.
 
-## Project notes
+### 2. Store Manager / Admin Operations
+- **Shop Operating Hours & Rules**: Database-driven store timings (`opening_time`, `closing_time`), temporary store closure toggle, minimum order value, and free delivery thresholds (`/api/shop/settings`, `/api/admin/shop-settings`).
+- **Live Business Analytics**: Real-time revenue aggregates (total, today, past 7 days, AOV), best-selling vegetables ranking, and active driver telemetry (`/api/admin/analytics/overview`).
+- **Order Dispatch & Driver Reassignment**: Order status advancement (`ACCEPTED`, `PREPARING`, `READY_FOR_PICKUP`), driver assignment and reassignment from failed states, and admin order cancellations with automatic stock rollback.
+- **COD Cash Reconciliation**: Complete audit trail of cash collected by drivers, uncollected balances, and single-click driver cash settlement (`/api/admin/reports/cod-reconciliation`).
 
-- [Local setup](docs/setup_guide.md)
-- [Architecture](docs/architecture.md)
-- [Database design](docs/database_design.md)
-- [API reference](docs/api_documentation.md)
+### 3. Delivery Driver Flow
+- **Duty & Availability Management**: Online/offline toggle guarded against active deliveries.
+- **Order Execution & GPS Tracking**: Accept assigned orders, mark pickup, stream live GPS location breadcrumbs, and report delivery failures with structured reason codes.
+- **OTP Verification & Cash Collection**: Secure BCrypt-hashed OTP customer verification and atomic COD cash collection tracking.
 
-Business areas such as checkout, orders, drivers, customer screens, and multi-shop tenant isolation are later phases. MySQL is the development database; keep secrets in environment variables and replace local defaults for deployments.
+---
+
+## Run Locally
+
+1. **Start MySQL 8.4**:
+   ```bash
+   docker compose up -d mysql
+   ```
+2. **Start Backend**:
+   ```bash
+   cd backend
+   mvn spring-boot:run
+   ```
+   *For initial setup, set `ADMIN_BOOTSTRAP_ENABLED=true`, `ADMIN_BOOTSTRAP_EMAIL`, and `ADMIN_BOOTSTRAP_PASSWORD` in environment variables or `.env`.*
+3. **Start Flutter Client**:
+   ```bash
+   cd flutter_app
+   flutter pub get
+   flutter run -d chrome # or -d windows
+   ```
+
+---
+
+## End-to-End Performance & Concurrency Verification
+
+To run the automated end-to-end performance test suite and benchmark:
+
+```bash
+# Using Python
+python scripts/performance_e2e_runner.py http://localhost:8080
+
+# Using PowerShell
+./scripts/run_e2e_performance.ps1
+```
+
+The runner exercises:
+- Public store configuration and catalog latency
+- End-to-end customer checkout and idempotency
+- 25-50 concurrent client checkout stress simulation with zero inventory overselling
+- Response latency percentiles (P50, P95, P99)
+
+---
+
+## Documentation
+
+- [Setup Guide](docs/setup_guide.md)
+- [Architecture & State Machine](docs/architecture.md)
+- [Database Schema & Migrations](docs/database_design.md)
+- [REST API Reference](docs/api_documentation.md)
+- [Missing Features & Audit Status](docs/missing_features.md)

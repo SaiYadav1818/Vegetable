@@ -10,6 +10,8 @@ interface DriverProfileRepository extends JpaRepository<DriverProfile,Long>{
     Page<DriverProfile> findAll(Pageable pageable);
     @Lock(LockModeType.PESSIMISTIC_WRITE) @Query("select d from DriverProfile d where d.userId=:id")
     Optional<DriverProfile> findLocked(@Param("id") Long userId);
+    long countByOnlineTrue();
+    long countByOnlineTrueAndAvailableTrue();
 }
 interface DriverAssignmentRepository extends JpaRepository<DriverAssignment,Long>{
     Optional<DriverAssignment> findFirstByOrder_IdOrderByAssignedAtDesc(Long orderId);

@@ -4,6 +4,7 @@ import '../../core/theme/app_theme.dart';
 import '../../core/widgets/app_states.dart';
 import '../../core/widgets/design_components.dart';
 import '../customer/customer_cart.dart';
+import 'order_models.dart';
 import 'orders_api.dart';
 
 class CheckoutPage extends StatefulWidget {
@@ -27,14 +28,67 @@ class _CheckoutPageState extends State<CheckoutPage> {
   bool _placing = false;
   String? _checkoutIdempotencyKey;
 
+  List<CustomerAddress> _savedAddresses = [];
+  CustomerAddress? _selectedAddress;
+  bool _isNewAddress = false;
+  bool _saveNewAddress = false;
+  String _newAddressLabel = 'Home';
+  ShopSettings? _shopSettings;
+
   @override
   void initState() {
     super.initState();
     _checkoutIdempotencyKey = 'chk_${DateTime.now().millisecondsSinceEpoch}_${(1000 + (DateTime.now().microsecond % 9000))}';
-    _cart.load().then((_) {
-      if (mounted) setState(() {});
-    }).catchError((_) {
-      if (mounted) setState(() {});
+    _loadInitialData();
+  }
+
+  Future<void> _loadInitialData() async {
+    try {
+      await _cart.load();
+    } catch (_) {}
+
+    try {
+      final settings = await _api.getShopSettings();
+      if (mounted) setState(() => _shopSettings = settings);
+    } catch (_) {}
+
+    try {
+      final addresses = await _api.getAddresses();
+      if (mounted && addresses.isNotEmpty) {
+        setState(() {
+          _savedAddresses = addresses;
+          final defaultAddr = addresses.where((a) => a.isDefault).firstOrNull ?? addresses.first;
+          _applyAddress(defaultAddr);
+        });
+      } else if (mounted) {
+        setState(() => _isNewAddress = true);
+      }
+    } catch (_) {
+      if (mounted) setState(() => _isNewAddress = true);
+    }
+  }
+
+  void _applyAddress(CustomerAddress address) {
+    _selectedAddress = address;
+    _isNewAddress = false;
+    _name.text = address.recipientName;
+    _phone.text = address.recipientPhone;
+    _address.text = address.addressLine;
+    _house.text = address.houseNumber ?? '';
+    _area.text = address.area;
+    _pin.text = address.pincode;
+    _landmark.text = address.landmark ?? '';
+  }
+
+  void _switchToNewAddress() {
+    setState(() {
+      _selectedAddress = null;
+      _isNewAddress = true;
+      _address.clear();
+      _house.clear();
+      _area.clear();
+      _pin.clear();
+      _landmark.clear();
     });
   }
 
@@ -58,10 +112,36 @@ class _CheckoutPageState extends State<CheckoutPage> {
 
   String? _required(String? value) =>
       value == null || value.trim().isEmpty ? 'Required' : null;
+
+  num get _deliveryFee {
+    if (_shopSettings == null) return 30;
+    if (_cart.subtotal >= _shopSettings!.freeDeliveryThreshold) return 0;
+    return _shopSettings!.deliveryCharge;
+  }
+
+  num get _grandTotal => _cart.subtotal + _deliveryFee;
+
   Future<void> _place() async {
     if (_placing || !_form.currentState!.validate() || _cart.lines.isEmpty) return;
     setState(() => _placing = true);
     try {
+      if (_isNewAddress && _saveNewAddress) {
+        try {
+          await _api.createAddress(CustomerAddress(
+            id: 0,
+            label: _newAddressLabel,
+            recipientName: _name.text.trim(),
+            recipientPhone: _phone.text.trim(),
+            addressLine: _address.text.trim(),
+            houseNumber: _house.text.trim().isEmpty ? null : _house.text.trim(),
+            area: _area.text.trim(),
+            landmark: _landmark.text.trim().isEmpty ? null : _landmark.text.trim(),
+            pincode: _pin.text.trim(),
+            isDefault: _savedAddresses.isEmpty,
+          ));
+        } catch (_) {}
+      }
+
       final order = await _api.placeOrder(
         idempotencyKey: _checkoutIdempotencyKey,
         cart: _cart.snapshot,
@@ -122,6 +202,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
               ...children,
             ])),
       );
+
   Widget _field(TextEditingController controller, String label,
           {String? Function(String?)? validator,
           TextInputType? keyboardType,
@@ -134,6 +215,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
               textCapitalization: TextCapitalization.words,
               decoration: InputDecoration(labelText: label, hintText: hint),
               validator: validator));
+
   Future<void> _pickDate() async {
     final today = DateTime.now();
     final value = await showDatePicker(
@@ -169,6 +251,42 @@ class _CheckoutPageState extends State<CheckoutPage> {
                               'Confirm your delivery details and place your order.',
                               style: Theme.of(context).textTheme.bodySmall),
                           const SizedBox(height: 14),
+
+                          if (_savedAddresses.isNotEmpty) ...[
+                            SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: Row(
+                                children: [
+                                  ..._savedAddresses.map((addr) {
+                                    final isSelected = !_isNewAddress && _selectedAddress?.id == addr.id;
+                                    return Padding(
+                                      padding: const EdgeInsets.only(right: 8),
+                                      child: ChoiceChip(
+                                        avatar: Icon(
+                                          addr.label.toLowerCase() == 'work'
+                                              ? Icons.work_outline
+                                              : Icons.home_outlined,
+                                          size: 16,
+                                          color: isSelected ? Colors.white : AppColors.darkGreen,
+                                        ),
+                                        label: Text('${addr.label} (${addr.area})'),
+                                        selected: isSelected,
+                                        onSelected: (_) => setState(() => _applyAddress(addr)),
+                                      ),
+                                    );
+                                  }),
+                                  ChoiceChip(
+                                    avatar: const Icon(Icons.add, size: 16),
+                                    label: const Text('New Address'),
+                                    selected: _isNewAddress,
+                                    onSelected: (_) => _switchToNewAddress(),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                          ],
+
                           _section(
                               'Delivery address', Icons.location_on_outlined, [
                             _field(_house, 'House / flat number',
@@ -184,6 +302,26 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                     ? 'Enter a 6 digit pincode'
                                     : null),
                             _field(_landmark, 'Landmark', hint: 'Optional'),
+                            if (_isNewAddress) ...[
+                              const Divider(height: 20),
+                              CheckboxListTile(
+                                contentPadding: EdgeInsets.zero,
+                                title: const Text('Save this address for future orders'),
+                                value: _saveNewAddress,
+                                onChanged: (val) => setState(() => _saveNewAddress = val ?? false),
+                              ),
+                              if (_saveNewAddress)
+                                Row(
+                                  children: ['Home', 'Work', 'Other'].map((l) => Padding(
+                                    padding: const EdgeInsets.only(right: 8),
+                                    child: ChoiceChip(
+                                      label: Text(l),
+                                      selected: _newAddressLabel == l,
+                                      onSelected: (_) => setState(() => _newAddressLabel = l),
+                                    ),
+                                  )).toList(),
+                                ),
+                            ],
                           ]),
                           const SizedBox(height: 10),
                           _section(
@@ -216,12 +354,12 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                     labelText: 'Preferred time slot'),
                                 items: const [
                                   DropdownMenuItem(
-                                      value: 'MORNING', child: Text('Morning')),
+                                      value: 'MORNING', child: Text('Morning (6 AM - 9 AM)')),
                                   DropdownMenuItem(
                                       value: 'AFTERNOON',
-                                      child: Text('Afternoon')),
+                                      child: Text('Afternoon (12 PM - 3 PM)')),
                                   DropdownMenuItem(
-                                      value: 'EVENING', child: Text('Evening'))
+                                      value: 'EVENING', child: Text('Evening (5 PM - 8 PM)'))
                                 ],
                                 onChanged: (value) =>
                                     setState(() => _slot = value ?? 'MORNING')),
@@ -255,9 +393,26 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                       style: Theme.of(context)
                                           .textTheme
                                           .bodySmall)),
-                              Text('Confirmed with order',
-                                  style: Theme.of(context).textTheme.bodySmall)
+                              _deliveryFee == 0
+                                  ? const Text('FREE',
+                                      style: TextStyle(
+                                          color: AppColors.green,
+                                          fontWeight: FontWeight.bold))
+                                  : PriceText(amount: _deliveryFee)
                             ]),
+                            if (_deliveryFee > 0 && _shopSettings != null)
+                              Padding(
+                                padding: const EdgeInsets.only(top: 4),
+                                child: Text(
+                                  'Add ₹${(_shopSettings!.freeDeliveryThreshold - _cart.subtotal).clamp(0, 9999).toStringAsFixed(0)} more for FREE delivery!',
+                                  style: const TextStyle(
+                                      color: AppColors.darkGreen,
+                                      fontSize: 12,
+                                      fontWeight: FontWeight.w600),
+                                ),
+                              ),
+                            const Divider(height: 16),
+                            _summaryRow('Grand Total', _grandTotal, isTotal: true),
                           ]),
                           const SizedBox(height: 10),
                           Card(
@@ -269,7 +424,7 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                       style: TextStyle(
                                           fontWeight: FontWeight.w700)),
                                   subtitle: Text(
-                                      'Pay your driver when the order arrives.'))),
+                                      'Pay your driver when the fresh vegetables arrive.'))),
                         ])),
         bottomNavigationBar: _cart.lines.isEmpty || _cart.loading
             ? null
@@ -285,10 +440,10 @@ class _CheckoutPageState extends State<CheckoutPage> {
                               mainAxisSize: MainAxisSize.min,
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                            Text('Subtotal',
+                            Text('Grand Total',
                                 style: Theme.of(context).textTheme.bodySmall),
                             PriceText(
-                                amount: _cart.subtotal,
+                                amount: _grandTotal,
                                 emphasized: true,
                                 style: Theme.of(context)
                                     .textTheme
@@ -311,8 +466,13 @@ class _CheckoutPageState extends State<CheckoutPage> {
                                       : const Text('Place COD order'))))
                     ]))),
       );
-  Widget _summaryRow(String label, num amount) => Row(children: [
-        Expanded(child: Text(label)),
-        PriceText(amount: amount, emphasized: true)
+
+  Widget _summaryRow(String label, num amount, {bool isTotal = false}) => Row(children: [
+        Expanded(
+            child: Text(label,
+                style: isTotal
+                    ? const TextStyle(fontWeight: FontWeight.w800)
+                    : null)),
+        PriceText(amount: amount, emphasized: isTotal)
       ]);
 }

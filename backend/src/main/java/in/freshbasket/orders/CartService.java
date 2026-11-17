@@ -25,20 +25,20 @@ public class CartService {
         Inventory stock=inventory.findById(product.getId()).orElseThrow(()->notFound("Inventory not found"));
         CartItem existing=items.findByCart_IdOrderByProduct_Id(cart.getId()).stream().filter(i->i.getProduct().getId().equals(product.getId())).findFirst().orElse(null);
         BigDecimal newQuantity=request.quantity().add(existing==null?BigDecimal.ZERO:existing.getQuantity());
-        if(newQuantity.compareTo(stock.getQuantity())>0)throw conflict("Requested quantity exceeds current stock");
+        if(newQuantity.compareTo(stock.getSellableQuantity())>0)throw conflict("Requested quantity exceeds current stock");
         if(existing==null)items.save(new CartItem(cart,product,request.quantity()));else existing.setQuantity(newQuantity);
         return response(cart);
     }
     @Transactional public OrderDtos.CartResponse update(String email,long itemId,OrderDtos.CartQuantityRequest request){
         Cart cart=cart(email);CartItem item=items.findByIdAndCart_Id(itemId,cart.getId()).orElseThrow(()->notFound("Cart item not found"));
         Inventory stock=inventory.findById(item.getProduct().getId()).orElseThrow(()->notFound("Inventory not found"));
-        if(request.quantity().compareTo(stock.getQuantity())>0)throw conflict("Requested quantity exceeds current stock");
+        if(request.quantity().compareTo(stock.getSellableQuantity())>0)throw conflict("Requested quantity exceeds current stock");
         item.setQuantity(request.quantity());return response(cart);
     }
     @Transactional public void remove(String email,long itemId){Cart cart=cart(email);CartItem item=items.findByIdAndCart_Id(itemId,cart.getId()).orElseThrow(()->notFound("Cart item not found"));items.delete(item);}
     @Transactional public void clear(long cartId){items.deleteByCart_Id(cartId);}
     @Transactional(readOnly=true) public OrderDtos.CartResponse response(Cart cart){
-        var lines=items.findByCart_IdOrderByProduct_Id(cart.getId()).stream().map(item->{Product p=item.getProduct();BigDecimal stock=inventory.findById(p.getId()).map(Inventory::getQuantity).orElse(BigDecimal.ZERO);
+        var lines=items.findByCart_IdOrderByProduct_Id(cart.getId()).stream().map(item->{Product p=item.getProduct();BigDecimal stock=inventory.findById(p.getId()).map(Inventory::getSellableQuantity).orElse(BigDecimal.ZERO);
             BigDecimal total=money(p.getPrice().multiply(item.getQuantity()));return new OrderDtos.CartLineResponse(item.getId(),p.getId(),p.getName(),p.getImageUrl(),p.getUnit().name(),p.getPrice(),item.getQuantity(),stock,total,sellable(p)&&stock.signum()>0);}).toList();
         BigDecimal subtotal=lines.stream().map(OrderDtos.CartLineResponse::lineTotal).reduce(BigDecimal.ZERO,BigDecimal::add);
         return new OrderDtos.CartResponse(lines,money(subtotal));

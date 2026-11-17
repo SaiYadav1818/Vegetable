@@ -34,15 +34,47 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
   }
 
   List<String> _next(String status) => switch (status) {
-        'PLACED' => ['ACCEPTED', 'REJECTED'],
-        'ACCEPTED' => ['PREPARING'],
-        'PREPARING' => ['READY_FOR_PICKUP'],
-        'DELIVERY_FAILED' => ['READY_FOR_PICKUP', 'CANCELLED'],
+        'PLACED' => ['ACCEPTED', 'REJECTED', 'CANCELLED'],
+        'ACCEPTED' => ['PREPARING', 'CANCELLED'],
+        'PREPARING' => ['READY_FOR_PICKUP', 'CANCELLED'],
+        'READY_FOR_PICKUP' => ['CANCELLED'],
+        'DELIVERY_FAILED' => ['READY_FOR_PICKUP', 'CANCELLED', 'REJECTED'],
         _ => [],
       };
   Future<void> _changeStatus(OrderRecord order, String status) async {
+    String? reason;
+    if (status == 'CANCELLED' || status == 'REJECTED') {
+      final controller = TextEditingController(text: status == 'CANCELLED' ? 'Admin cancelled order' : 'Out of stock');
+      final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text('$status Order ${order.orderNumber}'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('Stock will automatically be restored to inventory.'),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                decoration: const InputDecoration(labelText: 'Reason note'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Back')),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+              child: Text('Confirm $status'),
+            ),
+          ],
+        ),
+      );
+      if (ok != true) return;
+      reason = controller.text.trim();
+    }
     try {
-      await _api.updateAdminStatus(order.id, status);
+      await _api.updateAdminStatus(order.id, status, reason: reason);
       await _reload();
     } catch (e) {
       _error(e);
@@ -212,6 +244,12 @@ class _AdminOrdersPageState extends State<AdminOrdersPage> {
                                   children: [
                                     Text(
                                         '${order.recipientPhone} · ${order.addressLine}, ${order.area}, ${order.pincode}'),
+                                    if (order.cancellationReason != null)
+                                      Padding(
+                                        padding: const EdgeInsets.symmetric(vertical: 4),
+                                        child: Text('Reason: ${order.cancellationReason}',
+                                            style: const TextStyle(color: AppColors.error, fontWeight: FontWeight.w700, fontSize: 12)),
+                                      ),
                                     const SizedBox(height: 8),
                                     ...order.items.map((item) => Padding(
                                         padding: const EdgeInsets.symmetric(

@@ -36,11 +36,25 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
       OrdersApi(widget.client).adminOrders(size: 100),
       CatalogApi(widget.client).getProducts(admin: true, size: 100),
       OrdersApi(widget.client).getCodReconciliationReport(),
+      OrdersApi(widget.client).getAnalyticsOverview().catchError((_) => const AnalyticsOverview(
+        revenue: RevenueMetrics(totalRevenue: 0, todayRevenue: 0, thisWeekRevenue: 0, averageOrderValue: 0),
+        orders: OrderMetrics(totalOrders: 0, completedOrders: 0, activeOrders: 0, cancelledOrders: 0, failedOrders: 0),
+        topSellingVegetables: [],
+        driverFleet: DriverFleetMetric(totalDrivers: 0, onlineDrivers: 0, availableDrivers: 0, deliveriesCompleted: 0, codCollected: 0, codPendingReconciliation: 0),
+      )),
+      OrdersApi(widget.client).getShopSettings().catchError((_) => const ShopSettings(
+        id: 1, shopName: 'FreshBasket Neighborhood Mart', contactPhone: '+91 98765 43210',
+        shopAddress: '12/4 Green Avenue, Sector 5, Bangalore', openingTime: '06:30', closingTime: '21:30',
+        openToday: true, minOrderValue: 100, deliveryCharge: 30, freeDeliveryThreshold: 500,
+        announcementBanner: 'Fresh morning farm arrivals available daily from 6:30 AM!',
+      )),
     ]);
     return _AdminData(
         result[0] as List<OrderRecord>,
         result[1] as List<Product>,
-        result[2] as CodReconciliationReport);
+        result[2] as CodReconciliationReport,
+        result[3] as AnalyticsOverview,
+        result[4] as ShopSettings);
   }
 
   Future<void> _settleDriver(int driverId, String driverName) async {
@@ -61,6 +75,116 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
     }
   }
 
+  void _showShopSettingsModal(ShopSettings settings) {
+    final nameCtrl = TextEditingController(text: settings.shopName);
+    final phoneCtrl = TextEditingController(text: settings.contactPhone);
+    final addrCtrl = TextEditingController(text: settings.shopAddress);
+    final openTimeCtrl = TextEditingController(text: settings.openingTime);
+    final closeTimeCtrl = TextEditingController(text: settings.closingTime);
+    final minOrderCtrl = TextEditingController(text: settings.minOrderValue.toString());
+    final feeCtrl = TextEditingController(text: settings.deliveryCharge.toString());
+    final freeThresholdCtrl = TextEditingController(text: settings.freeDeliveryThreshold.toString());
+    final bannerCtrl = TextEditingController(text: settings.announcementBanner ?? '');
+    bool isOpen = settings.openToday;
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setModalState) => Padding(
+          padding: EdgeInsets.fromLTRB(16, 0, 16, MediaQuery.viewInsetsOf(ctx).bottom + 24),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text('Shop Settings & Operating Rules',
+                        style: Theme.of(ctx).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800)),
+                    Switch(
+                      value: isOpen,
+                      onChanged: (val) => setModalState(() => isOpen = val),
+                    ),
+                  ],
+                ),
+                Text(
+                  isOpen ? 'Store is currently OPEN for orders' : 'Store is CLOSED today',
+                  style: TextStyle(
+                    color: isOpen ? AppColors.green : AppColors.error,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                  ),
+                ),
+                const SizedBox(height: 14),
+                TextField(controller: nameCtrl, decoration: const InputDecoration(labelText: 'Shop Name')),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(child: TextField(controller: phoneCtrl, decoration: const InputDecoration(labelText: 'Contact Phone'))),
+                    const SizedBox(width: 10),
+                    Expanded(child: TextField(controller: addrCtrl, decoration: const InputDecoration(labelText: 'Shop Address'))),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(child: TextField(controller: openTimeCtrl, decoration: const InputDecoration(labelText: 'Opening Time (e.g. 06:30)'))),
+                    const SizedBox(width: 10),
+                    Expanded(child: TextField(controller: closeTimeCtrl, decoration: const InputDecoration(labelText: 'Closing Time (e.g. 21:30)'))),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(child: TextField(controller: minOrderCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Min Order (₹)'))),
+                    const SizedBox(width: 10),
+                    Expanded(child: TextField(controller: feeCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Delivery Fee (₹)'))),
+                    const SizedBox(width: 10),
+                    Expanded(child: TextField(controller: freeThresholdCtrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: 'Free Delivery (₹)'))),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                TextField(controller: bannerCtrl, decoration: const InputDecoration(labelText: 'Store Notice Banner')),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: () async {
+                    try {
+                      final updated = ShopSettings(
+                        id: settings.id,
+                        shopName: nameCtrl.text.trim(),
+                        contactPhone: phoneCtrl.text.trim(),
+                        shopAddress: addrCtrl.text.trim(),
+                        openingTime: openTimeCtrl.text.trim(),
+                        closingTime: closeTimeCtrl.text.trim(),
+                        openToday: isOpen,
+                        minOrderValue: num.tryParse(minOrderCtrl.text.trim()) ?? 100,
+                        deliveryCharge: num.tryParse(feeCtrl.text.trim()) ?? 30,
+                        freeDeliveryThreshold: num.tryParse(freeThresholdCtrl.text.trim()) ?? 500,
+                        announcementBanner: bannerCtrl.text.trim(),
+                      );
+                      await OrdersApi(widget.client).updateShopSettings(updated);
+                      if (!mounted) return;
+                      Navigator.pop(ctx);
+                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Shop settings updated successfully!')));
+                      await _refresh();
+                    } catch (e) {
+                      if (!mounted) return;
+                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(OrdersApi(widget.client).describeError(e))));
+                    }
+                  },
+                  child: const Text('Save Shop Settings'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
   void _showCodModal(CodReconciliationReport report) {
     showModalBottomSheet<void>(
       context: context,
@@ -73,37 +197,100 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text('COD cash reconciliation',
-                style: Theme.of(ctx).textTheme.titleLarge),
-            const SizedBox(height: 6),
+                style: Theme.of(ctx)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 4),
             Text(
-              'Total collected: ₹${report.totalCollected.toStringAsFixed(2)} · Unsettled: ₹${report.totalUnsettled.toStringAsFixed(2)}',
-              style: const TextStyle(color: AppColors.muted),
+              'Track cash collected by delivery drivers and reconcile against register.',
+              style: Theme.of(ctx).textTheme.bodySmall,
             ),
-            const Divider(height: 24),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: AppColors.paleGreen,
+                      borderRadius: BorderRadius.circular(AppRadius.sm),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Total collected',
+                            style: Theme.of(ctx).textTheme.bodySmall),
+                        Text('₹${report.totalCollected.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w800, fontSize: 16)),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFFFF3E0),
+                      borderRadius: BorderRadius.circular(AppRadius.sm),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text('Unsettled with shop',
+                            style: Theme.of(ctx).textTheme.bodySmall),
+                        Text('₹${report.totalUnsettled.toStringAsFixed(2)}',
+                            style: const TextStyle(
+                                fontWeight: FontWeight.w800,
+                                fontSize: 16,
+                                color: Colors.deepOrange)),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            Text('Drivers holding cash',
+                style: Theme.of(ctx)
+                    .textTheme
+                    .titleSmall
+                    ?.copyWith(fontWeight: FontWeight.w800)),
+            const SizedBox(height: 8),
             if (report.drivers.isEmpty)
               const Padding(
-                padding: EdgeInsets.symmetric(vertical: 24),
-                child: Center(child: Text('No drivers have collected cash yet.')),
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Center(
+                    child: Text('No active driver balances at this time.')),
               )
             else
               ...report.drivers.map((d) => Card(
-                    margin: const EdgeInsets.only(bottom: 10),
+                    margin: const EdgeInsets.only(bottom: 8),
                     child: ListTile(
                       title: Text(d.driverName,
                           style: const TextStyle(fontWeight: FontWeight.w700)),
                       subtitle: Text(
-                          'Unsettled: ₹${d.unsettledAmount.toStringAsFixed(2)} (${d.unsettledCount} orders)\nSettled: ₹${d.settledAmount.toStringAsFixed(2)}'),
-                      isThreeLine: true,
-                      trailing: d.unsettledAmount > 0
-                          ? FilledButton.tonal(
+                          '${d.driverPhone} · ${d.unsettledCount} pending payments'),
+                      trailing: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text('₹${d.unsettledAmount.toStringAsFixed(0)}',
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                  color: AppColors.ink)),
+                          const SizedBox(width: 8),
+                          if (d.unsettledAmount > 0)
+                            FilledButton.tonal(
                               onPressed: () {
                                 Navigator.pop(ctx);
                                 _settleDriver(d.driverUserId, d.driverName);
                               },
                               child: const Text('Settle'),
-                            )
-                          : const Icon(Icons.check_circle_rounded,
-                              color: AppColors.green),
+                            ),
+                        ],
+                      ),
                     ),
                   )),
           ],
@@ -115,128 +302,116 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
   @override
   Widget build(BuildContext context) => Scaffold(
         appBar: FreshBasketAppBar(
-            title: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text('Good day, ${widget.adminName.split(' ').first}',
-                      style: Theme.of(context)
-                          .textTheme
-                          .titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w800)),
-                  Text('FreshBasket store overview',
-                      style: Theme.of(context)
-                          .textTheme
-                          .labelSmall
-                          ?.copyWith(color: AppColors.muted))
-                ]),
-            actions: [
-              IconButton(
-                  tooltip: 'Sign out',
-                  onPressed: widget.onSignOut,
-                  icon: const Icon(Icons.logout))
-            ]),
+          title: Text('Store Manager · ${widget.adminName}'),
+          actions: [
+            IconButton(
+                onPressed: widget.onSignOut,
+                icon: const Icon(Icons.logout),
+                tooltip: 'Sign out')
+          ],
+        ),
         body: FutureBuilder<_AdminData>(
             future: _data,
             builder: (context, snapshot) {
               if (snapshot.connectionState == ConnectionState.waiting) {
-                return const LoadingState(message: 'Loading store overview...');
+                return const LoadingState(
+                    message: 'Loading store overview...');
               }
               if (snapshot.hasError) {
                 return ErrorState(
-                    message:
-                        'Could not load store information. ${snapshot.error}',
+                    message: OrdersApi(widget.client)
+                        .describeError(snapshot.error!),
                     onRetry: _refresh);
               }
               final data = snapshot.data!;
-              final now = DateTime.now();
-              final todayOrders = data.orders
-                  .where((o) =>
-                      o.createdAt.year == now.year &&
-                      o.createdAt.month == now.month &&
-                      o.createdAt.day == now.day)
-                  .toList();
               final open = data.orders
-                  .where((o) =>
-                      o.status == 'PLACED' ||
-                      o.status == 'ACCEPTED' ||
-                      o.status == 'PREPARING' ||
-                      o.status == 'READY_FOR_PICKUP' ||
-                      o.status == 'DELIVERY_FAILED')
+                  .where((o) => [
+                        'PLACED',
+                        'ACCEPTED',
+                        'PREPARING',
+                        'READY_FOR_PICKUP'
+                      ].contains(o.status))
                   .length;
               final low = data.products
                   .where((p) => p.stock <= p.minimumStock)
                   .length;
               final cod = data.codReport;
+              final analytics = data.analytics;
+              final shop = data.shopSettings;
 
               return RefreshIndicator(
                   onRefresh: _refresh,
                   child: ListView(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
                       children: [
                         Card(
-                            color: AppColors.paleGreen,
                             child: Padding(
-                                padding: const EdgeInsets.all(18),
+                                padding: const EdgeInsets.all(16),
                                 child: Column(
                                     crossAxisAlignment:
                                         CrossAxisAlignment.start,
                                     children: [
-                                      Row(children: [
-                                        Container(
-                                            width: 40,
-                                            height: 40,
-                                            decoration: const BoxDecoration(
-                                                color: Colors.white,
-                                                shape: BoxShape.circle),
-                                            child: const Icon(
-                                                Icons.storefront_rounded,
-                                                color: AppColors.green)),
-                                        const SizedBox(width: 12),
-                                        Expanded(
-                                            child: Column(
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.start,
-                                                children: [
-                                              Text('Daily operational summary',
-                                                  style: Theme.of(context)
-                                                      .textTheme
-                                                      .titleMedium
-                                                      ?.copyWith(
-                                                          fontWeight:
-                                                              FontWeight.w800)),
-                                              Text(
-                                                  '${todayOrders.length} orders received today',
-                                                  style: Theme.of(context)
-                                                      .textTheme
-                                                      .bodySmall
-                                                      ?.copyWith(
-                                                          color:
-                                                              AppColors.muted))
-                                            ]))
-                                      ]),
-                                      const SizedBox(height: 14),
-                                      Wrap(spacing: 8, runSpacing: 8, children: [
-                                        MetricChip(
-                                            label: '$open open orders',
-                                            accent: open > 0
-                                                ? AppColors.orange
-                                                : AppColors.green),
-                                        MetricChip(
-                                            label: '$low low stock',
-                                            accent: low > 0
-                                                ? AppColors.error
-                                                : AppColors.green),
-                                        MetricChip(
-                                            label:
-                                                '₹${cod.totalUnsettled.toStringAsFixed(0)} COD unsettled',
-                                            accent: cod.totalUnsettled > 0
-                                                ? AppColors.orange
-                                                : AppColors.green),
-                                      ])
-                                    ]))),
+                                  Row(
+                                    mainAxisAlignment:
+                                        MainAxisAlignment.spaceBetween,
+                                    children: [
+                                      Text(shop.shopName,
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .titleMedium
+                                              ?.copyWith(
+                                                  fontWeight: FontWeight.w800)),
+                                      Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 10, vertical: 4),
+                                        decoration: BoxDecoration(
+                                          color: shop.openToday
+                                              ? AppColors.paleGreen
+                                              : const Color(0xFFFFEBEE),
+                                          borderRadius:
+                                              BorderRadius.circular(AppRadius.sm),
+                                        ),
+                                        child: Text(
+                                          shop.openToday ? 'OPEN' : 'CLOSED',
+                                          style: TextStyle(
+                                            color: shop.openToday
+                                                ? AppColors.darkGreen
+                                                : AppColors.error,
+                                            fontWeight: FontWeight.w800,
+                                            fontSize: 12,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 6),
+                                  Text(
+                                      'Hours: ${shop.openingTime} - ${shop.closingTime} · Min order ₹${shop.minOrderValue.toStringAsFixed(0)} · Free delivery above ₹${shop.freeDeliveryThreshold.toStringAsFixed(0)}',
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodySmall),
+                                  const SizedBox(height: 12),
+                                  Wrap(spacing: 8, runSpacing: 8, children: [
+                                    MetricChip(
+                                        label: '$open active orders',
+                                        accent: open > 0
+                                            ? AppColors.orange
+                                            : AppColors.green),
+                                    MetricChip(
+                                        label: '$low low stock alerts',
+                                        accent: low > 0
+                                            ? AppColors.orange
+                                            : AppColors.green),
+                                    MetricChip(
+                                        label:
+                                            '₹${cod.totalUnsettled.toStringAsFixed(0)} COD unsettled',
+                                        accent: cod.totalUnsettled > 0
+                                            ? AppColors.orange
+                                            : AppColors.green),
+                                  ])
+                                ]))),
                         const SizedBox(height: 16),
-                        const SectionTitle('Store metrics'),
+                        const SectionTitle('Business Analytics'),
                         GridView.count(
                             crossAxisCount: 2,
                             shrinkWrap: true,
@@ -246,34 +421,66 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                             childAspectRatio: 1.45,
                             children: [
                               DashboardStatCard(
-                                  title: 'Open orders',
-                                  value: '$open',
-                                  icon: Icons.receipt_long_outlined,
-                                  accent: open > 0
-                                      ? AppColors.orange
-                                      : AppColors.green,
+                                  title: "Today's Revenue",
+                                  value: '₹${analytics.revenue.todayRevenue.toStringAsFixed(0)}',
+                                  icon: Icons.currency_rupee_rounded,
+                                  accent: AppColors.darkGreen,
                                   onTap: widget.onOrders),
                               DashboardStatCard(
-                                  title: 'COD Collected',
-                                  value: '₹${cod.totalCollected.toStringAsFixed(0)}',
-                                  icon: Icons.currency_rupee_rounded,
-                                  onTap: () => _showCodModal(cod)),
+                                  title: 'Average Order (AOV)',
+                                  value: '₹${analytics.revenue.averageOrderValue.toStringAsFixed(0)}',
+                                  icon: Icons.analytics_outlined,
+                                  onTap: widget.onOrders),
                               DashboardStatCard(
-                                  title: 'Products',
-                                  value: '${data.products.length}',
-                                  icon: Icons.inventory_2_outlined,
-                                  onTap: widget.onProducts),
+                                  title: 'Delivered Orders',
+                                  value: '${analytics.orders.completedOrders}',
+                                  icon: Icons.check_circle_outline,
+                                  accent: AppColors.green,
+                                  onTap: widget.onOrders),
                               DashboardStatCard(
-                                  title: 'COD Unsettled',
-                                  value: '₹${cod.totalUnsettled.toStringAsFixed(0)}',
-                                  icon: Icons.account_balance_wallet_outlined,
-                                  accent: cod.totalUnsettled > 0
-                                      ? AppColors.orange
-                                      : AppColors.green,
-                                  onTap: () => _showCodModal(cod)),
+                                  title: 'Active Drivers',
+                                  value: '${analytics.driverFleet.onlineDrivers}/${analytics.driverFleet.totalDrivers}',
+                                  icon: Icons.delivery_dining_outlined,
+                                  onTap: widget.onDrivers),
                             ]),
+                        if (analytics.topSellingVegetables.isNotEmpty) ...[
+                          const SizedBox(height: 16),
+                          const SectionTitle('Top Selling Vegetables'),
+                          Card(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                              child: Column(
+                                children: analytics.topSellingVegetables.map((item) => Padding(
+                                  padding: const EdgeInsets.symmetric(vertical: 6),
+                                  child: Row(
+                                    children: [
+                                      const Icon(Icons.eco_outlined, color: AppColors.green, size: 20),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(item.productName,
+                                            style: const TextStyle(fontWeight: FontWeight.w700)),
+                                      ),
+                                      Text('${item.quantitySold.toStringAsFixed(1)} sold',
+                                          style: Theme.of(context).textTheme.bodySmall),
+                                      const SizedBox(width: 12),
+                                      Text('₹${item.totalRevenue.toStringAsFixed(0)}',
+                                          style: const TextStyle(fontWeight: FontWeight.w800)),
+                                    ],
+                                  ),
+                                )).toList(),
+                              ),
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 16),
-                        const SectionTitle('Quick actions'),
+                        const SectionTitle('Quick Actions'),
+                        _ActionCard(
+                            icon: Icons.store_mall_directory_outlined,
+                            title: 'Shop Settings & Operating Rules',
+                            subtitle:
+                                'Toggle store open/closed, change timings and delivery rules',
+                            onTap: () => _showShopSettingsModal(shop)),
+                        const SizedBox(height: 10),
                         _ActionCard(
                             icon: Icons.account_balance_wallet_outlined,
                             title: 'COD Cash Reconciliation',
@@ -283,20 +490,20 @@ class _AdminDashboardPageState extends State<AdminDashboardPage> {
                         const SizedBox(height: 10),
                         _ActionCard(
                             icon: Icons.inventory_2_outlined,
-                            title: 'Manage products',
+                            title: 'Manage Products',
                             subtitle:
                                 '${data.products.length} products · $low low stock',
                             onTap: widget.onProducts),
                         const SizedBox(height: 10),
                         _ActionCard(
                             icon: Icons.receipt_long_outlined,
-                            title: 'Manage orders',
+                            title: 'Manage Orders',
                             subtitle: '$open orders need attention',
                             onTap: widget.onOrders),
                         const SizedBox(height: 10),
                         _ActionCard(
                             icon: Icons.people_alt_outlined,
-                            title: 'Manage drivers',
+                            title: 'Manage Drivers',
                             subtitle:
                                 'Create driver accounts and check availability',
                             onTap: widget.onDrivers),
@@ -333,8 +540,10 @@ class _ActionCard extends StatelessWidget {
 }
 
 class _AdminData {
-  const _AdminData(this.orders, this.products, this.codReport);
+  const _AdminData(this.orders, this.products, this.codReport, this.analytics, this.shopSettings);
   final List<OrderRecord> orders;
   final List<Product> products;
   final CodReconciliationReport codReport;
+  final AnalyticsOverview analytics;
+  final ShopSettings shopSettings;
 }

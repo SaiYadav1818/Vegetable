@@ -154,3 +154,41 @@ All endpoints require `hasRole('ADMIN')`.
   - Returns total collected, total settled with counter, total unsettled cash held by drivers, unpaid delivered orders count, and per-driver breakdown.
 - `POST /api/admin/payments/{id}/reconcile`: Reconciles a single order payment with optional settlement note.
 - `POST /api/admin/drivers/{driverId}/reconcile-all`: Batches and settles all pending collected cash for a specific driver.
+
+---
+
+## 6. Shop Settings & Delivery Configuration
+
+- `GET /api/shop/settings`: Public read endpoint returning shop name, phone, address, operating hours, open/closed today toggle, min order value, delivery charge, free delivery threshold, and announcement banner.
+- `PUT /api/admin/shop-settings`: Admin endpoint to update store hours, delivery charge rules, announcement text, and store open/closed status.
+
+---
+
+## 7. Customer Saved Addresses (`/api/customer/addresses`)
+
+All endpoints require `hasRole('CUSTOMER')`.
+
+- `GET /api/customer/addresses`: Lists all saved addresses for the authenticated customer ordered by default flag and creation time.
+- `POST /api/customer/addresses`: Creates and saves a new delivery address with optional default flag (first address created becomes default automatically).
+- `PUT /api/customer/addresses/{id}`: Updates an existing saved address.
+- `DELETE /api/customer/addresses/{id}`: Deletes a saved address (promotes next available address to default if default was deleted).
+- `PUT /api/customer/addresses/{id}/default`: Explicitly marks an address as the default delivery address.
+
+---
+
+## 8. Customer Reorder & Cancellation
+
+- `POST /api/orders/{id}/reorder`: Inspects previously delivered or cancelled order, checks real-time inventory and pricing, adds available quantities into the customer's server cart, and returns an itemized breakdown (`itemsAdded`, `itemsUnavailable`).
+- `POST /api/orders/{id}/cancel`: Customer cancellation endpoint supporting structured reason codes (`Changed mind`, `Ordered by mistake`, `Delivery time too late`, `Other`) and atomic stock restoration.
+
+---
+
+## 9. Admin Business Analytics (`/api/admin/analytics`)
+
+Requires `hasRole('ADMIN')`.
+
+- `GET /api/admin/analytics/overview`: Server-side SQL aggregates providing:
+  - `revenue`: Total gross revenue, today's revenue, past 7 days revenue, average order value (AOV).
+  - `orders`: Total orders, completed orders, active orders, cancelled orders, failed deliveries.
+  - `topSellingVegetables`: Top 5 vegetables by quantity sold and gross revenue.
+  - `driverFleet`: Total drivers, online drivers, available drivers, completed deliveries, COD cash collected and pending reconciliation.

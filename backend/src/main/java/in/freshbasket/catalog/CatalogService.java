@@ -31,14 +31,14 @@ public class CatalogService {
         Category category=category(r.categoryId());if(!category.isActive())throw badRequest("Cannot add a product to an inactive category");validateImage(r.imageUrl());
         Product product=products.save(new Product(r.name().trim(),clean(r.description()),category,r.price(),r.unit(),clean(r.imageUrl())));
         product.update(r.name().trim(),clean(r.description()),category,r.price(),r.unit(),clean(r.imageUrl()),r.active(),r.available());
-        Inventory stock=inventory.save(new Inventory(product,r.initialStock(),r.minimumStock()));
+        Inventory stock=inventory.save(new Inventory(product,r.initialStock(),r.minimumStock(),r.safetyStockBuffer()));
         if(r.initialStock().signum()!=0)transactions.save(new InventoryTransaction(product,actor(actorEmail),r.initialStock(),stock.getQuantity(),"INITIAL_STOCK","Initial inventory"));
         return productDto(product);
     }
     @Transactional public CatalogDtos.ProductResponse updateProduct(long id,CatalogDtos.ProductUpdateRequest r){
         Product p=products.findById(id).orElseThrow(()->notFound("Product not found"));Category c=category(r.categoryId());if(!c.isActive())throw badRequest("Cannot assign a product to an inactive category");validateImage(r.imageUrl());
         p.update(r.name().trim(),clean(r.description()),c,r.price(),r.unit(),clean(r.imageUrl()),r.active(),r.available());
-        Inventory i=inventory.findById(id).orElseThrow(()->notFound("Inventory not found"));i.minimumStock(r.minimumStock());
+        Inventory i=inventory.findById(id).orElseThrow(()->notFound("Inventory not found"));i.minimumStock(r.minimumStock());if(r.safetyStockBuffer()!=null)i.safetyStockBuffer(r.safetyStockBuffer());
         return productDto(p);
     }
     @Transactional public void deactivateProduct(long id){Product p=products.findById(id).orElseThrow(()->notFound("Product not found"));p.deactivate();}
@@ -46,13 +46,13 @@ public class CatalogService {
     @Transactional public CatalogDtos.ProductResponse adjustInventory(long id,CatalogDtos.InventoryAdjustment r,String actorEmail){
         Product p=products.findById(id).orElseThrow(()->notFound("Product not found"));Inventory i=inventory.findLockedByProductId(id).orElseThrow(()->notFound("Inventory not found"));
         BigDecimal previous=i.getQuantity();BigDecimal next=previous.add(r.delta());if(next.signum()<0)throw badRequest("Inventory cannot be reduced below zero");
-        i.adjust(r.delta());if(r.minimumStock()!=null)i.minimumStock(r.minimumStock());
+        i.adjust(r.delta());if(r.minimumStock()!=null)i.minimumStock(r.minimumStock());if(r.safetyStockBuffer()!=null)i.safetyStockBuffer(r.safetyStockBuffer());
         if(r.delta().signum()!=0){InventoryTransaction transaction=transactions.save(new InventoryTransaction(p,actor(actorEmail),r.delta(),next,r.reason().trim(),clean(r.note())));
             if(previous.compareTo(i.getMinimumStock())>0&&next.compareTo(i.getMinimumStock())<=0)notificationPublisher.lowStock(p,next,i.getMinimumStock(),transaction.getId());}
         return productDto(p);
     }
     @Transactional(readOnly=true) public Page<CatalogDtos.InventoryTransactionResponse> history(long productId,Pageable pageable){if(!products.existsById(productId))throw notFound("Product not found");return transactions.findByProduct_Id(productId,pageable).map(t->new CatalogDtos.InventoryTransactionResponse(t.getId(),t.getQuantityDelta(),t.getQuantityAfter(),t.getReason(),t.getNote(),t.getCreatedAt()));}
-    private CatalogDtos.ProductResponse productDto(Product p){Inventory i=inventory.findById(p.getId()).orElseThrow(()->notFound("Inventory not found"));return new CatalogDtos.ProductResponse(p.getId(),p.getName(),p.getDescription(),p.getCategory().getId(),p.getCategory().getName(),p.getPrice(),p.getUnit(),p.getImageUrl(),p.isActive(),p.isAvailable(),i.getQuantity(),i.getMinimumStock());}
+    private CatalogDtos.ProductResponse productDto(Product p){Inventory i=inventory.findById(p.getId()).orElseThrow(()->notFound("Inventory not found"));return new CatalogDtos.ProductResponse(p.getId(),p.getName(),p.getDescription(),p.getCategory().getId(),p.getCategory().getName(),p.getPrice(),p.getUnit(),p.getImageUrl(),p.isActive(),p.isAvailable(),i.getQuantity(),i.getMinimumStock(),i.getSafetyStockBuffer(),i.getSellableQuantity());}
     private CatalogDtos.CategoryResponse categoryDto(Category c){return new CatalogDtos.CategoryResponse(c.getId(),c.getName(),c.getDescription(),c.isActive());}
     private Category category(Long id){return categories.findById(id).orElseThrow(()->notFound("Category not found"));}
     private in.freshbasket.user.AppUser actor(String email){return users.findByEmail(email).orElseThrow(()->notFound("Admin account not found"));}

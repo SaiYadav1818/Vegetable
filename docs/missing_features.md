@@ -42,11 +42,11 @@ Currently, shop parameters are hardcoded in `application.yml` or assumed in code
 
 | Missing Feature | Description & Requirement |
 | :--- | :--- |
-| **Shop Operating Hours** | Store `opening_time` (e.g. 06:30) and `closing_time` (e.g. 21:00). When current local time is outside operating hours, Flutter displays "Shop is closed. Orders placed now will be packed tomorrow morning." |
-| **Temporary Shop Closure Toggle** | Single-click toggle in Admin panel (`is_open_today: false`, e.g., rainy day, market holiday). Disables new order placement immediately with custom customer message. |
-| **Dynamic Delivery Rules** | Move `minimum_order_value`, `delivery_charge`, and `free_delivery_threshold` (e.g., Free delivery above ₹500) into a database table `shop_settings` with an Admin API (`PUT /api/admin/shop-settings`) and public read API (`GET /api/shop/settings`). |
+| **Shop Operating Hours** | **Implemented (Phase 2)**: Stored in `shop_settings` via Flyway `V6`. Customer Home and Checkout screens display store opening hours, while Admin Dashboard provides interactive sheet to configure daily hours. |
+| **Temporary Shop Closure Toggle** | **Implemented (Phase 2)**: Single-click toggle in Admin Dashboard (`open_today`). Blocks checkout when closed with store notice and informs customers on Home Page. |
+| **Dynamic Delivery Rules** | **Implemented (Phase 2)**: `min_order_value`, `delivery_charge`, and `free_delivery_threshold` in `shop_settings`. APIs `GET /api/shop/settings` and `PUT /api/admin/shop-settings`. Dynamically calculated at checkout. |
 | **Delivery Radius & Geofencing** | Currently, any 6-digit pincode is accepted. A neighborhood shop cannot deliver 30 km away. Implement a supported pincode list or maximum delivery radius (e.g. 5 km from shop coordinates). |
-| **Shop Contact & UPI Metadata** | Display shop phone number, WhatsApp contact button for customer queries, and shop address on the home and checkout screens. |
+| **Shop Contact & Metadata** | **Implemented (Phase 2)**: Shop contact phone and store address exposed via `GET /api/shop/settings` and displayed in Customer Home Support and Store Manager headers. |
 
 ---
 
@@ -54,10 +54,10 @@ Currently, shop parameters are hardcoded in `application.yml` or assumed in code
 
 | Feature | Current State | Missing Functionality |
 | :--- | :--- | :--- |
-| **Saved Addresses** | Customers type recipient name, phone, address, landmark, and pincode every single checkout. | Create `customer_addresses` table. Allow customers to save multiple addresses ("Home", "Work", "Parents") and select a default address with one tap during checkout. |
-| **Reorder Button** | Customers re-buy the same staple vegetables weekly (onions, potatoes, tomatoes). | Add a "Reorder" action on past orders in `CustomerOrdersPage`. Clicking it checks current stock, populates the customer's server cart, and navigates directly to checkout. |
-| **Order Receipt / Invoice** | No printable or downloadable receipt exists. | Add an in-app receipt summary view with store GST/Tax ID (if applicable), breakdown of line totals, delivery fee, payment mode, and order timestamp. |
-| **Customer Cancellation Reasons** | Free-text string; customers often leave it blank. | Provide pre-set cancellation reason chips ("Changed mind", "Ordered by mistake", "Delivery time too late") with optional custom notes. |
+| **Saved Addresses** | **Implemented (Phase 2)** | `customer_addresses` table via Flyway `V6`. `CustomerAddressService` provides address saving, listing, update, delete, and default selection. Flutter Checkout page provides one-tap address chips. |
+| **Reorder Button** | **Implemented (Phase 2)** | `POST /api/orders/{id}/reorder` validates stock availability, adds available items into cart, and returns itemized report. Flutter My Orders page provides "Reorder items" action. |
+| **Order Receipt / Invoice** | Open / Future Phase | Add an in-app receipt summary view with store GST/Tax ID (if applicable), breakdown of line totals, delivery fee, payment mode, and order timestamp. |
+| **Customer Cancellation Reasons** | **Implemented (Phase 2)** | Modal dialog with reason chips ("Changed mind", "Ordered by mistake", etc.) sending structured cancellation reason saved in `orders.cancellation_reason` and restoring stock. |
 | **Product Reviews & Ratings** | Not present. | Lightweight 1-5 star rating and comment per delivered product to help the shop identify suppliers with low vegetable quality. |
 
 ---
@@ -66,10 +66,10 @@ Currently, shop parameters are hardcoded in `application.yml` or assumed in code
 
 | Analytics Area | Current State | Missing Functionality |
 | :--- | :--- | :--- |
-| **Financial Revenue Aggregates** | Client-side calculations on top 20 recent orders. Inaccurate once orders exceed page size. | Backend analytics repository queries: `daily_revenue`, `weekly_revenue`, `monthly_revenue`, average order value (AOV). |
-| **COD Cash Reconciliation** | Current State | **Implemented (Phase 1)**: `GET /api/admin/reports/cod-reconciliation` exposes per-driver unsettled and collected cash. Admin can reconcile per-payment (`POST /api/admin/payments/{id}/reconcile`) or batch driver settlement (`POST /api/admin/drivers/{driverId}/reconcile-all`). Flutter Admin Dashboard features live COD reconciliation bottom sheet. |
-| **Best-Selling Vegetables** | Not tracked. | Query `order_items` grouped by `product_id` over the last 7 and 30 days to highlight top vegetables and forecast tomorrow's wholesale procurement. |
-| **Driver Performance Metrics** | Basic online/available flags. | Metric cards: Total deliveries completed, on-time delivery rate, total COD collected, failed deliveries count. |
+| **Financial Revenue Aggregates** | **Implemented (Phase 2)** | Backend `AnalyticsService` queries: `total_revenue`, `today_revenue`, `weekly_revenue`, `average_order_value (AOV)`. Exposed via `GET /api/admin/analytics/overview`. |
+| **COD Cash Reconciliation** | **Implemented (Phase 1)** | `GET /api/admin/reports/cod-reconciliation` exposes per-driver unsettled and collected cash. Admin can reconcile per-payment (`POST /api/admin/payments/{id}/reconcile`) or batch driver settlement (`POST /api/admin/drivers/{driverId}/reconcile-all`). Flutter Admin Dashboard features live COD reconciliation bottom sheet. |
+| **Best-Selling Vegetables** | **Implemented (Phase 2)** | Database aggregate query grouping `order_items` from delivered orders to highlight top vegetables with quantity sold and revenue. Displayed in Flutter Admin Dashboard. |
+| **Driver Performance Metrics** | **Implemented (Phase 2)** | Fleet metric cards in Admin Dashboard: Total drivers, online drivers, available drivers, completed deliveries, COD collected, and unsettled balances. |
 
 ---
 
